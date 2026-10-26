@@ -9,8 +9,6 @@ use Filament\Widgets\TableWidget as BaseWidget;
 
 class RecentActivity extends BaseWidget
 {
-    protected static bool $isLazy = false;
-
     // Make it sit below the charts
     protected static ?int $sort = 4;
 
@@ -21,8 +19,8 @@ class RecentActivity extends BaseWidget
     {
         return $table
             ->query(
-                // We use latest() to show the most recent borrows first
-                Transaction::query()->latest()
+                // Most recently changed first, so approvals and returns surface too, not just new borrows
+                Transaction::query()->latest('updated_at')
             )
             ->columns([
                 Tables\Columns\TextColumn::make('user.name')
@@ -31,19 +29,17 @@ class RecentActivity extends BaseWidget
                 Tables\Columns\TextColumn::make('book.title')
                     ->label('Book')
                     ->searchable(),
-                Tables\Columns\TextColumn::make('borrow_date')
-                    ->label('Date')
-                    ->date()
-                    ->sortable(),
-                Tables\Columns\TextColumn::make('fine_status')
-                    ->label('Action') // Matches your Figma 'Action' column
+                Tables\Columns\TextColumn::make('action')
+                    ->label('Action')
                     ->badge()
-                    ->color(fn (string $state): string => match ($state) {
-                        'None' => 'success',
-                        'Pending' => 'danger',
-                        'Paid' => 'gray',
-                        default => 'primary',
-                    }),
+                    ->state(fn (Transaction $record): string => $record->isOverdue() ? 'Overdue' : $record->status->activityLabel())
+                    ->color(fn (Transaction $record): string => $record->isOverdue() ? 'danger' : $record->status->getColor())
+                    ->icon(fn (Transaction $record): string => $record->isOverdue() ? 'heroicon-m-exclamation-triangle' : $record->status->getIcon()),
+                Tables\Columns\TextColumn::make('updated_at')
+                    ->label('When')
+                    ->since()
+                    ->dateTimeTooltip()
+                    ->sortable(),
             ]);
     }
 }

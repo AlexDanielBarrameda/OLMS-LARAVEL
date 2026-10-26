@@ -22,7 +22,7 @@ class UserInfoWidget extends Widget
         return [
             'user' => Auth::user(),
             'currentlyBorrowed' => Transaction::where('user_id', Auth::id())
-                ->where('fine_status', '!=', 'Returned')
+                ->active()
                 ->count(),
         ];
     }

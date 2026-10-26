@@ -3,7 +3,7 @@
 namespace App\Providers\Filament;
 
 use App\Filament\Pages\AdminDashboard;
-use App\Filament\Widgets\ExpandedAccountWidget;
+use App\Filament\Pages\Profile;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
 use Filament\Http\Middleware\DisableBladeIconComponents;
@@ -43,15 +43,25 @@ class AdminPanelProvider extends PanelProvider
                 PanelsRenderHook::HEAD_END,
                 fn (): View => view('filament.hooks.theme')
             )
+            // Same top bar as the student side: theme toggle, notifications bell, avatar → profile (which holds Sign out)
+            ->userMenu(false)
+            ->renderHook(
+                PanelsRenderHook::GLOBAL_SEARCH_AFTER,
+                fn (): View => view('filament.hooks.topbar-theme')
+            )
+            ->renderHook(
+                PanelsRenderHook::TOPBAR_END,
+                fn (): View => view('filament.hooks.topbar-avatar', ['profilePage' => Profile::class])
+            )
+            // Borrow requests and stock alerts should reach staff without a reload
+            ->databaseNotifications(isLazy: false)
+            ->databaseNotificationsPolling('30s')
             ->discoverResources(in: app_path('Filament/Resources'), for: 'App\Filament\Resources')
             ->discoverPages(in: app_path('Filament/Pages'), for: 'App\Filament\Pages')
             ->pages([
                 AdminDashboard::class,
             ])
             ->discoverWidgets(in: app_path('Filament/Widgets'), for: 'App\Filament\Widgets')
-            ->widgets([
-                ExpandedAccountWidget::class,
-            ])
             ->middleware([
                 EncryptCookies::class,
                 AddQueuedCookiesToResponse::class,

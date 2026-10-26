@@ -2,6 +2,7 @@
 
 namespace App\Providers\Filament;
 
+use App\Filament\User\Pages\Profile;
 use App\Filament\User\Pages\UserDashboard;
 use Filament\Http\Middleware\Authenticate;
 use Filament\Http\Middleware\AuthenticateSession;
@@ -45,17 +46,17 @@ class UserPanelProvider extends PanelProvider
             )
             // No dropdown: the avatar links straight to the profile (which holds Sign out)
             ->userMenu(false)
-            // In-app due-date reminders (sent daily by app:send-due-reminders); loaded with the page, no polling
+            // In-app due-date reminders and request decisions; loaded with the page, no polling
             ->databaseNotifications(isLazy: false)
             ->databaseNotificationsPolling(null)
             // Top bar: theme toggle, notifications bell, then the avatar
             ->renderHook(
                 PanelsRenderHook::GLOBAL_SEARCH_AFTER,
-                fn (): View => view('filament.user.hooks.topbar-theme')
+                fn (): View => view('filament.hooks.topbar-theme')
             )
             ->renderHook(
                 PanelsRenderHook::TOPBAR_END,
-                fn (): View => view('filament.user.hooks.topbar-end')
+                fn (): View => view('filament.hooks.topbar-avatar', ['profilePage' => Profile::class])
             )
             ->discoverResources(in: app_path('Filament/User/Resources'), for: 'App\Filament\User\Resources')
             ->discoverPages(in: app_path('Filament/User/Pages'), for: 'App\Filament\User\Pages')

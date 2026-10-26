@@ -16,7 +16,7 @@ beforeEach(function () {
     $this->actingAs(User::factory()->create(['role' => 'student']));
 });
 
-function borrow(string $title, string $dueDate, string $status = 'None'): Transaction
+function borrow(string $title, string $dueDate, string $status = 'approved'): Transaction
 {
     $book = Book::create([
         'title' => $title,
@@ -30,7 +30,8 @@ function borrow(string $title, string $dueDate, string $status = 'None'): Transa
         'book_id' => $book->id,
         'borrow_date' => '2026-10-01',
         'due_date' => $dueDate,
-        'fine_status' => $status,
+        'status' => $status,
+        'fine_status' => 'None',
     ]);
 }
 
@@ -69,7 +70,7 @@ it('reminds about books that are due soon, but not ones due later', function () 
 it('lists the most urgent books first and ignores returned ones', function () {
     borrow('Later Book', '2026-11-20');
     borrow('Overdue Book', '2026-10-01');
-    borrow('Returned Book', '2026-09-01', 'Returned');
+    borrow('Returned Book', '2026-09-01', 'returned');
 
     Livewire::test(MyBorrowedBooksWidget::class)
         ->assertSeeInOrder(['Overdue Book', 'Later Book'])

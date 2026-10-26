@@ -22,11 +22,12 @@ beforeEach(function () {
         'book_id' => Book::create(['title' => $title, 'author' => 'A', 'isbn' => (string) fake()->unique()->isbn13(), 'stock' => 1])->id,
         'borrow_date' => '2026-10-01',
         'due_date' => $due,
+        'status' => 'approved',
         'fine_status' => 'None',
         ...$extra,
     ]);
 
-    $this->returned = $loan('Returned Book', '2026-09-01', ['fine_status' => 'Returned', 'return_date' => '2026-09-01']);
+    $this->returned = $loan('Returned Book', '2026-09-01', ['status' => 'returned', 'return_date' => '2026-09-01']);
     $this->onLoan = $loan('On Loan Book', '2026-11-20');
     $this->dueSoon = $loan('Due Soon Book', '2026-10-26');
     $this->overdue = $loan('Overdue Book', '2026-10-19');

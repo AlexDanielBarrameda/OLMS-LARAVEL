@@ -26,6 +26,7 @@ class BorrowingHistoryWidget extends BaseWidget
             ->columns([
                 Tables\Columns\TextColumn::make('book.title')->label('Book'),
                 Tables\Columns\TextColumn::make('book.author')->label('Author'),
+                Tables\Columns\TextColumn::make('status')->badge(),
                 Tables\Columns\TextColumn::make('borrow_date')
                     ->date()
                     ->label('Borrow Date'),

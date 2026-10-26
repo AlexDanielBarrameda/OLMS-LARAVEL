@@ -45,6 +45,7 @@ it('shows a cover on borrowed books', function () {
         'book_id' => $this->book->id,
         'borrow_date' => now(),
         'due_date' => now()->addDays(14),
+        'status' => 'approved',
         'fine_status' => 'None',
     ]);
 
@@ -60,6 +61,7 @@ it('shows short borrowed and due dates on borrowed books', function () {
         'book_id' => $this->book->id,
         'borrow_date' => '2026-10-24',
         'due_date' => '2027-01-03',
+        'status' => 'approved',
         'fine_status' => 'None',
     ]);
 

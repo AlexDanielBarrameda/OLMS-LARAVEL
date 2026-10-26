@@ -2,8 +2,9 @@
 
 namespace App\Filament\User\Widgets;
 
-use App\Models\Book;
+use App\Enums\TransactionStatus;
 use App\Models\Transaction;
+use Illuminate\Database\Eloquent\Builder;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget as BaseWidget;
@@ -20,7 +21,7 @@ class MyBorrowedBooksWidget extends BaseWidget
     protected static bool $isLazy = false;
 
     protected int | string | array $columnSpan = 'full';
-    protected static ?string $heading = 'My Borrowed Books';
+    protected static ?string $heading = 'My Books';
 
     // 1. Listen for changes (like when a book is borrowed)
     #[On('update-book-tables')]
@@ -40,11 +41,14 @@ class MyBorrowedBooksWidget extends BaseWidget
             ->query(
                 Transaction::query()
                     ->where('user_id', Auth::id())
-                    ->active()
+                    ->open()
             )
-            // Most urgent first
-            ->defaultSort('due_date')
+            // Loans first, most urgent on top; requests awaiting approval after them
+            ->defaultSort(fn (Builder $query): Builder => $query
+                ->orderByRaw('CASE WHEN status = ? THEN 1 ELSE 0 END', [TransactionStatus::Pending->value])
+                ->orderBy('due_date'))
             ->recordClasses(fn (Transaction $record) => match (true) {
+                $record->isPending() => 'bg-book-pending',
                 $record->daysUntilDue() < 0 => 'bg-book-overdue',
                 $record->daysUntilDue() <= Transaction::DUE_SOON_DAYS => 'bg-book-due-soon',
                 default => null,
@@ -76,21 +80,33 @@ class MyBorrowedBooksWidget extends BaseWidget
                         ->color('gray'),
                     
                     Tables\Columns\TextColumn::make('borrow_date')
-                        ->formatStateUsing(fn ($state) => 'Borrowed '.static::shortDate($state))
+                        ->formatStateUsing(fn ($state, Transaction $record) => ($record->isPending() ? 'Requested ' : 'Borrowed ').static::shortDate(
+                            $record->isPending() ? $record->created_at : $state
+                        ))
                         ->icon('heroicon-o-calendar'),
 
+                    // Requests don't have a real due date until they're approved
                     Tables\Columns\TextColumn::make('due_date')
+                        ->state(fn (Transaction $record) => $record->isPending() ? null : $record->due_date)
                         ->formatStateUsing(fn ($state) => 'Due '.static::shortDate($state))
                         ->icon('heroicon-o-calendar-days')
-                        ->color(fn (Transaction $record) => $record->daysUntilDue() < 0 ? 'danger' : null),
+                        ->color(fn (Transaction $record) => $record->isOverdue() ? 'danger' : null),
 
                     Tables\Columns\TextColumn::make('due_status')
-                        ->state(fn (Transaction $record) => $record->dueLabel())
+                        ->state(fn (Transaction $record) => $record->isPending()
+                            ? TransactionStatus::Pending->getLabel()
+                            : $record->dueLabel())
                         ->badge()
-                        ->color(fn (Transaction $record) => $record->daysUntilDue() < 0 ? 'danger' : 'warning')
-                        ->icon(fn (Transaction $record) => $record->daysUntilDue() < 0
-                            ? 'heroicon-m-exclamation-triangle'
-                            : 'heroicon-m-clock'),
+                        ->color(fn (Transaction $record) => match (true) {
+                            $record->isPending() => 'info',
+                            $record->isOverdue() => 'danger',
+                            default => 'warning',
+                        })
+                        ->icon(fn (Transaction $record) => match (true) {
+                            $record->isPending() => 'heroicon-m-ellipsis-horizontal-circle',
+                            $record->isOverdue() => 'heroicon-m-exclamation-triangle',
+                            default => 'heroicon-m-clock',
+                        }),
                 ])->space(2),
             ])
             ->actions([
@@ -98,24 +114,39 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->label('Return Book')
                     ->button()
                     ->color('success')
+                    ->visible(fn (Transaction $record) => $record->isActive())
                     ->requiresConfirmation()
                     ->modalHeading('Confirm Return')
                     ->modalDescription('Are you sure you want to return this book?')
                     // 2. Inject $livewire into the closure
                     ->action(function (Transaction $record, Component $livewire) {
-                        $record->update([
-                            'fine_status' => 'Returned',
-                            'return_date' => today(),
-                        ]);
-
-                        Book::whereKey($record->book_id)->increment('stock');
+                        // Marking it returned sets the return date and puts the copy back on the shelf
+                        $record->update(['status' => TransactionStatus::Returned]);
 
                         Notification::make()
                             ->title('Book Returned Successfully!')
                             ->success()
                             ->send();
-                            
+
                         // 3. Shout out to the page that the tables need to refresh!
+                        $livewire->dispatch('update-book-tables');
+                    }),
+
+                Action::make('cancelRequest')
+                    ->label('Cancel request')
+                    ->button()
+                    ->color('gray')
+                    ->visible(fn (Transaction $record) => $record->isPending())
+                    ->requiresConfirmation()
+                    ->modalHeading(fn (Transaction $record) => "Cancel your request for \"{$record->book->title}\"?")
+                    ->modalSubmitActionLabel('Cancel request')
+                    ->modalCancelActionLabel('Keep it')
+                    ->action(function (Transaction $record, Component $livewire) {
+                        // Still pending, so no stock was taken
+                        $record->delete();
+
+                        Notification::make()->title('Request cancelled')->success()->send();
+
                         $livewire->dispatch('update-book-tables');
                     }),
             ]);

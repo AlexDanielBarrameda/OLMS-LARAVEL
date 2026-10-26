@@ -1,6 +1,8 @@
 <?php
 
+use App\Enums\TransactionStatus;
 use App\Filament\User\Widgets\AvailableBooksWidget;
+use App\Filament\User\Widgets\MyBorrowedBooksWidget;
 use App\Models\Book;
 use App\Models\Transaction;
 use App\Models\User;
@@ -33,6 +35,7 @@ function loan(User $user, Book $book, string $dueDate = '2026-11-01', array $att
     return Transaction::create([
         'user_id' => $user->id,
         'book_id' => $book->id,
+        'status' => TransactionStatus::Approved,
         'borrow_date' => '2026-10-01',
         'due_date' => $dueDate,
         'fine_status' => 'None',
@@ -43,63 +46,94 @@ function loan(User $user, Book $book, string $dueDate = '2026-11-01', array $att
 function expectBlocked(string $message): void
 {
     $before = Transaction::count();
-    $stock = test()->book->fresh()->stock;
 
     Livewire::test(AvailableBooksWidget::class)
         ->callTableAction('borrow', test()->book)
-        ->assertNotified("Can't borrow this book");
+        ->assertNotified("Can't request this book");
 
     expect(Transaction::count())->toBe($before)
-        ->and(test()->book->fresh()->stock)->toBe($stock)
         ->and(test()->user->borrowingBlockedReason(test()->book))->toContain($message);
 }
 
-it('lets a user in good standing borrow a book', function () {
+it('sends a borrow request without taking stock, and tells the librarians', function () {
+    $librarian = User::factory()->create(['role' => 'librarian']);
+
     Livewire::test(AvailableBooksWidget::class)
         ->callTableAction('borrow', $this->book)
-        ->assertNotified('Book Borrowed!');
+        ->assertNotified('Request sent');
 
-    expect($this->user->transactions()->active()->where('book_id', $this->book->id)->exists())->toBeTrue()
-        ->and($this->book->fresh()->stock)->toBe(1);
+    $request = $this->user->transactions()->sole();
+
+    expect($request->status)->toBe(TransactionStatus::Pending)
+        ->and($this->book->fresh()->stock)->toBe(2)
+        ->and($librarian->notifications()->first()->data['title'])->toBe('New borrow request');
 });
 
-it('blocks borrowing while the user has an overdue book', function () {
+it('labels the button by what the user already has', function () {
+    loan($this->user, $this->book, attributes: ['status' => TransactionStatus::Pending]);
+
+    Livewire::test(AvailableBooksWidget::class)
+        ->assertTableActionHasLabel('borrow', 'Requested', $this->book)
+        ->assertTableActionDisabled('borrow', $this->book)
+        ->assertTableActionHasLabel('borrow', 'Request to Borrow', makeBook('Emma'));
+});
+
+it('blocks requests while the user has an overdue book', function () {
     loan($this->user, makeBook('Late Book'), dueDate: '2026-10-20');
 
     expectBlocked('You have 1 overdue book.');
 });
 
-it('blocks borrowing past the limit of 3 active books', function () {
-    foreach (['One', 'Two', 'Three'] as $title) {
-        loan($this->user, makeBook($title));
-    }
+it('counts pending requests toward the limit of 3', function () {
+    loan($this->user, makeBook('One'));
+    loan($this->user, makeBook('Two'));
+    loan($this->user, makeBook('Three'), attributes: ['status' => TransactionStatus::Pending]);
 
-    expectBlocked('up to 3 books at a time');
+    expectBlocked('up to 3 books borrowed or requested');
 });
 
-it('blocks borrowing a second copy of a book the user already has', function () {
-    loan($this->user, $this->book);
+it('blocks a second request for a book the user already has or has requested', function () {
+    $loan = loan($this->user, $this->book);
 
-    expectBlocked('You already have "Dune" borrowed.');
+    expect($this->user->borrowingBlockedReason($this->book))->toBe('You already have "Dune" borrowed.');
+
+    $loan->update(['status' => TransactionStatus::Pending]);
+
+    expect($this->user->borrowingBlockedReason($this->book))->toContain('already requested');
 });
 
-it('does not count returned books against the rules', function () {
-    loan($this->user, $this->book, dueDate: '2026-10-01', attributes: ['fine_status' => 'Returned']);
+it('does not count returned or rejected loans against the rules', function () {
+    loan($this->user, $this->book, dueDate: '2026-10-01', attributes: ['status' => TransactionStatus::Returned]);
     loan($this->user, makeBook('Two'), dueDate: '2026-09-01', attributes: ['return_date' => '2026-09-01']);
-    loan($this->user, makeBook('Three'));
+    loan($this->user, makeBook('Three'), attributes: ['status' => TransactionStatus::Rejected]);
     loan($this->user, makeBook('Four'));
+    loan($this->user, makeBook('Five'));
 
     expect($this->user->borrowingBlockedReason($this->book))->toBeNull();
 });
 
-it('marks a returned book with a return date so it stops counting', function () {
+it('returns a book: sets the return date and puts the copy back', function () {
     $loan = loan($this->user, $this->book);
 
-    Livewire::test(\App\Filament\User\Widgets\MyBorrowedBooksWidget::class)
+    expect($this->book->fresh()->stock)->toBe(1);
+
+    Livewire::test(MyBorrowedBooksWidget::class)
         ->callTableAction('return', $loan);
 
     expect($loan->fresh())
-        ->fine_status->toBe('Returned')
+        ->status->toBe(TransactionStatus::Returned)
         ->return_date->not->toBeNull()
-        ->and($loan->fresh()->isActive())->toBeFalse();
+        ->and($this->book->fresh()->stock)->toBe(2);
+});
+
+it('lets the user cancel a pending request', function () {
+    $request = loan($this->user, $this->book, attributes: ['status' => TransactionStatus::Pending]);
+
+    Livewire::test(MyBorrowedBooksWidget::class)
+        ->assertSee('Awaiting approval')
+        ->assertTableActionHidden('return', $request)
+        ->callTableAction('cancelRequest', $request);
+
+    expect(Transaction::find($request->id))->toBeNull()
+        ->and($this->book->fresh()->stock)->toBe(2);
 });

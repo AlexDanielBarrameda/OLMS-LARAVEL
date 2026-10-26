@@ -4,6 +4,7 @@ namespace App\Models;
 
 // use Illuminate\Contracts\Auth\MustVerifyEmail;
 use Database\Factories\UserFactory;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
@@ -59,7 +60,18 @@ class User extends Authenticatable implements FilamentUser
         return $this->hasMany(Transaction::class);
     }
 
-    // Why this user can't borrow $book right now, or null when they can
+    public function bookRequests()
+    {
+        return $this->hasMany(BookRequest::class, 'requested_by');
+    }
+
+    // Librarians and super admins: the people who run the library
+    public function scopeStaff(Builder $query): Builder
+    {
+        return $query->whereIn('role', ['super_admin', 'librarian']);
+    }
+
+    // Why this user can't request $book right now, or null when they can
     public function borrowingBlockedReason(Book $book): ?string
     {
         $overdue = $this->transactions()->overdue()->count();
@@ -68,12 +80,17 @@ class User extends Authenticatable implements FilamentUser
             return "You have {$overdue} overdue ".str('book')->plural($overdue).'. Return '.($overdue === 1 ? 'it' : 'them').' before borrowing another.';
         }
 
-        if ($this->transactions()->active()->where('book_id', $book->id)->exists()) {
-            return "You already have \"{$book->title}\" borrowed.";
+        $existing = $this->transactions()->open()->where('book_id', $book->id)->first();
+
+        if ($existing) {
+            return $existing->isPending()
+                ? "You've already requested \"{$book->title}\". A librarian will review it soon."
+                : "You already have \"{$book->title}\" borrowed.";
         }
 
-        if ($this->transactions()->active()->count() >= static::MAX_ACTIVE_LOANS) {
-            return 'You can borrow up to '.static::MAX_ACTIVE_LOANS.' books at a time. Return one to borrow another.';
+        // Pending requests count too, so the queue can't be flooded
+        if ($this->transactions()->open()->count() >= static::MAX_ACTIVE_LOANS) {
+            return 'You can have up to '.static::MAX_ACTIVE_LOANS.' books borrowed or requested at a time. Return one to borrow another.';
         }
 
         return null;
@@ -107,5 +124,14 @@ class User extends Authenticatable implements FilamentUser
     public function isLibrarian(): bool
     {
         return $this->role === 'librarian';
+    }
+
+    public function roleLabel(): string
+    {
+        return match ($this->role) {
+            'super_admin' => 'Super Admin',
+            'librarian' => 'Librarian',
+            default => 'Student',
+        };
     }
 }

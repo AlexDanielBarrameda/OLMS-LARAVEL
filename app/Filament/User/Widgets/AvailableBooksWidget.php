@@ -2,9 +2,11 @@
 
 namespace App\Filament\User\Widgets;
 
+use App\Enums\TransactionStatus;
 use App\Models\Book;
 use App\Models\Transaction;
 use App\Models\User;
+use App\Services\LibraryNotifications;
 use Illuminate\Support\Facades\DB;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -23,9 +25,27 @@ class AvailableBooksWidget extends BaseWidget
     protected int | string | array $columnSpan = 'full';
     protected static ?string $heading = 'Available Books';
 
+    // book_id => status of this user's open requests/loans, loaded once per render instead of per card
+    protected ?array $openStatuses = null;
+
     // 1. Listen for changes (like when a book is returned)
     #[On('update-book-tables')]
-    public function refreshAvailableBooks(): void {}
+    public function refreshAvailableBooks(): void
+    {
+        $this->openStatuses = null;
+    }
+
+    protected function openStatusFor(Book $book): ?TransactionStatus
+    {
+        $this->openStatuses ??= Transaction::query()
+            ->where('user_id', Auth::id())
+            ->open()
+            ->get(['book_id', 'status'])
+            ->mapWithKeys(fn (Transaction $loan) => [$loan->book_id => $loan->status])
+            ->all();
+
+        return $this->openStatuses[$book->id] ?? null;
+    }
 
     public function table(Table $table): Table
     {
@@ -62,15 +82,23 @@ class AvailableBooksWidget extends BaseWidget
             ])
             ->actions([
                 Action::make('borrow')
-                    ->label('Borrow')
+                    ->label(fn (Book $record) => match ($this->openStatusFor($record)) {
+                        TransactionStatus::Pending => 'Requested',
+                        TransactionStatus::Approved => 'Borrowed',
+                        default => 'Request to Borrow',
+                    })
                     ->button()
                     ->color('success')
+                    ->disabled(fn (Book $record) => $record->stock <= 0 || $this->openStatusFor($record) !== null)
                     ->requiresConfirmation()
-                    ->disabled(fn (Book $record) => $record->stock <= 0)
+                    ->modalIcon('heroicon-o-book-open')
+                    ->modalHeading(fn (Book $record) => "Request \"{$record->title}\"?")
+                    ->modalDescription('A librarian will review your request. You\'ll get a notification when it\'s approved.')
+                    ->modalSubmitActionLabel('Send request')
                     // 2. Inject $livewire into the closure
                     ->action(function (Book $record, Component $livewire, Action $action) {
-                        // Lock the user and the book so double clicks can't slip past the rules or oversell stock
-                        $blockedReason = DB::transaction(function () use ($record): ?string {
+                        // Lock the user and the book so double clicks can't slip past the rules
+                        $result = DB::transaction(function () use ($record): Transaction|string {
                             $user = User::lockForUpdate()->findOrFail(Auth::id());
                             $book = Book::lockForUpdate()->findOrFail($record->id);
 
@@ -82,30 +110,37 @@ class AvailableBooksWidget extends BaseWidget
                                 return $reason;
                             }
 
-                            Transaction::create([
+                            // Stock is only taken when a librarian approves; dates are reset then too
+                            return Transaction::create([
                                 'user_id' => $user->id,
                                 'book_id' => $book->id,
-                                'borrow_date' => now(),
-                                'due_date' => now()->addDays(14),
+                                'status' => TransactionStatus::Pending,
+                                'borrow_date' => today()->toDateString(),
+                                'due_date' => today()->addDays(Transaction::LOAN_DAYS)->toDateString(),
                                 'fine_status' => 'None',
                             ]);
-                            $book->decrement('stock');
-
-                            return null;
                         });
 
-                        if ($blockedReason) {
+                        if (is_string($result)) {
                             Notification::make()
-                                ->title("Can't borrow this book")
-                                ->body($blockedReason)
+                                ->title("Can't request this book")
+                                ->body($result)
                                 ->danger()
                                 ->send();
 
                             $action->cancel();
                         }
 
-                        Notification::make()->title('Book Borrowed!')->success()->send();
-                        
+                        app(LibraryNotifications::class)->borrowRequested($result->load('user', 'book'));
+
+                        Notification::make()
+                            ->title('Request sent')
+                            ->body('We\'ll let you know when a librarian approves it.')
+                            ->success()
+                            ->send();
+
+                        $this->openStatuses = null;
+
                         // 3. Shout out to the page that the tables need to refresh!
                         $livewire->dispatch('update-book-tables');
                     }),

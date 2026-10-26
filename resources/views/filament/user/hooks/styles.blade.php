@@ -63,44 +63,6 @@
         color: #000000;
     }
 
-    /* Theme toggle, bell, then the avatar (links to the profile) at the end of the top bar */
-    .bg-appearance-compact {
-        padding: 0;
-    }
-
-    .bg-avatar-link {
-        margin-left: 0.75rem;
-        flex-shrink: 0;
-        display: grid;
-        place-items: center;
-        border-radius: 9999px;
-        outline: none;
-        transition: transform 120ms ease-out, box-shadow 160ms ease;
-    }
-
-    .bg-avatar-link.is-active {
-        box-shadow: 0 0 0 2px white, 0 0 0 4px rgb(16 185 129);
-    }
-
-    .dark .bg-avatar-link.is-active {
-        box-shadow: 0 0 0 2px var(--gray-900), 0 0 0 4px rgb(16 185 129);
-    }
-
-    .bg-avatar-link:focus-visible {
-        box-shadow: 0 0 0 2px white, 0 0 0 4px var(--primary-500);
-    }
-
-    .bg-avatar-link:active {
-        transform: scale(0.95);
-    }
-
-    @media (hover: hover) and (pointer: fine) {
-        .bg-avatar-link:not(.is-active):hover {
-            box-shadow: 0 0 0 3px rgb(16 185 129 / 0.3);
-        }
-    }
-
-    /* Book cards: cover-led, tight to their content */
     .bg-books .fi-ta-content-ctn .fi-ta-content.fi-ta-content-grid {
         gap: 1rem;
         padding: 1rem 1.25rem 1.25rem;
@@ -186,6 +148,12 @@
         justify-content: center;
     }
 
+    /* Requests awaiting approval: the book isn't theirs yet */
+    .bg-books .fi-ta-record.bg-book-pending .bg-book-cover {
+        opacity: 0.6;
+        filter: saturate(0.5);
+    }
+
     /* Due-date states on borrowed books */
     .bg-books .fi-ta-content-ctn .fi-ta-content.fi-ta-content-grid .fi-ta-record.bg-book-overdue {
         --tw-ring-color: rgb(239 68 68 / 0.55);
@@ -209,35 +177,4 @@
         transform: scale(0.97);
     }
 
-    /* Profile: account section */
-    .bg-account {
-        display: grid;
-        gap: 1rem;
-    }
-
-    @media (min-width: 48rem) {
-        .bg-account {
-            grid-template-columns: 1fr 1fr;
-        }
-    }
-
-    .bg-account-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        justify-content: space-between;
-        gap: 1rem;
-    }
-
-    .bg-account-text {
-        flex: 1 1 14rem;
-        margin: 0;
-        font-size: 0.875rem;
-        line-height: 1.5;
-        color: var(--gray-500);
-    }
-
-    .dark .bg-account-text {
-        color: var(--gray-400);
-    }
 </style>

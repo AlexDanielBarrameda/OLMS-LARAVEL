@@ -3,6 +3,7 @@
 namespace App\Filament\Widgets;
 
 use App\Models\Transaction;
+use Illuminate\Support\Carbon;
 use Filament\Widgets\ChartWidget;
 
 class MonthlyBorrowingChart extends ChartWidget
@@ -20,23 +21,27 @@ class MonthlyBorrowingChart extends ChartWidget
 
     protected function getData(): array
     {
-        // We use MIN(borrow_date) to allow sorting while using GROUP BY
-        $data = Transaction::selectRaw('MONTHNAME(borrow_date) as month, count(*) as count, MIN(borrow_date) as sort_date')
-            ->where('borrow_date', '>=', now()->subMonths(6))
-            ->groupBy('month')
-            ->orderBy('sort_date')
-            ->get();
+        $start = now()->startOfMonth()->subMonths(5);
+
+        // Count per month in PHP (works on any database) and keep empty months so the axis doesn't skip
+        $counts = Transaction::query()
+            ->lent() // requests that were never approved aren't borrows
+            ->whereDate('borrow_date', '>=', $start->toDateString())
+            ->pluck('borrow_date')
+            ->countBy(fn ($date) => Carbon::parse($date)->format('Y-m'));
+
+        $months = collect(range(0, 5))->map(fn (int $i) => $start->copy()->addMonths($i));
 
         return [
             'datasets' => [
                 [
                     'label' => 'Books Borrowed',
-                    'data' => $data->pluck('count')->toArray(),
-                    'backgroundColor' => '#22c55e', 
+                    'data' => $months->map(fn (Carbon $month) => $counts->get($month->format('Y-m'), 0))->all(),
+                    'backgroundColor' => '#22c55e',
                     'borderRadius' => 4,
                 ],
             ],
-            'labels' => $data->pluck('month')->toArray(),
+            'labels' => $months->map(fn (Carbon $month) => $month->format('F'))->all(),
         ];
     }
 

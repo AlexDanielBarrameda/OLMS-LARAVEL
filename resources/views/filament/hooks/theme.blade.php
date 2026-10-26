@@ -114,6 +114,120 @@
     .bg-theme-switching *::after {
         transition: none !important;
     }
+
+    /* Theme toggle, bell, then the avatar (links to the profile) at the end of the top bar */
+    .bg-appearance-compact {
+        padding: 0;
+    }
+
+    .bg-avatar-link {
+        margin-left: 0.75rem;
+        flex-shrink: 0;
+        display: grid;
+        place-items: center;
+        border-radius: 9999px;
+        outline: none;
+        transition: transform 120ms ease-out, box-shadow 160ms ease;
+    }
+
+    .bg-avatar-link.is-active {
+        box-shadow: 0 0 0 2px white, 0 0 0 4px rgb(16 185 129);
+    }
+
+    .dark .bg-avatar-link.is-active {
+        box-shadow: 0 0 0 2px var(--gray-900), 0 0 0 4px rgb(16 185 129);
+    }
+
+    .bg-avatar-link:focus-visible {
+        box-shadow: 0 0 0 2px white, 0 0 0 4px var(--primary-500);
+    }
+
+    .bg-avatar-link:active {
+        transform: scale(0.95);
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+        .bg-avatar-link:not(.is-active):hover {
+            box-shadow: 0 0 0 3px rgb(16 185 129 / 0.3);
+        }
+    }
+
+
+    /* Profile: account section */
+    .bg-account {
+        display: grid;
+        gap: 1rem;
+    }
+
+    @media (min-width: 48rem) {
+        .bg-account {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+
+    .bg-account-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+    }
+
+    .bg-account-text {
+        flex: 1 1 14rem;
+        margin: 0;
+        font-size: 0.875rem;
+        line-height: 1.5;
+        color: var(--gray-500);
+    }
+
+    .dark .bg-account-text {
+        color: var(--gray-400);
+    }
+
+    /* Staff profile header */
+    .bg-profile-card {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+    }
+
+    .bg-profile-card .bg-profile-avatar {
+        width: 4rem;
+        height: 4rem;
+        font-size: 1.5rem;
+    }
+
+    .bg-profile-meta {
+        display: grid;
+        gap: 0.25rem;
+        min-width: 0;
+    }
+
+    .bg-profile-name-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.625rem;
+    }
+
+    .bg-profile-name {
+        margin: 0;
+        font-size: 1.375rem;
+        font-weight: 600;
+        line-height: 1.2;
+        letter-spacing: -0.015em;
+    }
+
+    .bg-profile-detail {
+        margin: 0;
+        font-size: 0.875rem;
+        color: var(--gray-500);
+    }
+
+    .dark .bg-profile-detail {
+        color: var(--gray-400);
+    }
 </style>
 
 <script>

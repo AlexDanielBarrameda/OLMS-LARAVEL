@@ -17,6 +17,7 @@ beforeEach(function () {
         'book_id' => Book::create(['title' => $title, 'author' => 'A', 'isbn' => (string) fake()->unique()->isbn13(), 'stock' => 1])->id,
         'borrow_date' => '2026-10-01',
         'due_date' => $due,
+        'status' => 'approved',
         'fine_status' => 'None',
         ...$extra,
     ]);
@@ -24,7 +25,7 @@ beforeEach(function () {
     $loan('Overdue Book', '2026-10-21');
     $loan('Tomorrow Book', '2026-10-25');
     $loan('Later Book', '2026-11-10');
-    $loan('Returned Book', '2026-10-01', ['fine_status' => 'Returned', 'return_date' => '2026-10-02']);
+    $loan('Returned Book', '2026-10-01', ['status' => 'returned', 'return_date' => '2026-10-02']);
 });
 
 it('notifies borrowers about overdue and soon-due books only', function () {

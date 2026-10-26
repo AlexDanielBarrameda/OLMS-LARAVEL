@@ -18,11 +18,13 @@ class ProfileStatsWidget extends BaseWidget
     protected function getStats(): array
     {
         // Calculate all three stats in a single query
+        // Only loans count (requests that were never approved don't)
         $stats = Transaction::where('user_id', Auth::id())
+            ->lent()
             ->toBase()
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw("COALESCE(SUM(fine_status != 'Returned'), 0) as current")
-            ->selectRaw("COALESCE(SUM(fine_status != 'Returned' AND due_date < ?), 0) as overdue", [now()])
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'approved' AND return_date IS NULL THEN 1 ELSE 0 END), 0) as current")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'approved' AND return_date IS NULL AND due_date < ? THEN 1 ELSE 0 END), 0) as overdue", [today()->toDateString()])
             ->first();
 
         return [
