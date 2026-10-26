@@ -1,7 +1,0 @@
-{
-  "excludes": [
-    "public/js/filament/**",
-    "public/css/filament/**",
-    "public/fonts/filament/**"
-  ]
-}
