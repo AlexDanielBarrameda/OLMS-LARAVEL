@@ -18,12 +18,16 @@ class Transaction extends Model
 
     public const LOAN_DAYS = 14;
 
-    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'return_date', 'fine_status'];
+    // Overdue fine, in PHP, per day late
+    public const FINE_PER_DAY = 5.00;
+
+    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'return_date', 'fine_status', 'payment_receipt_path', 'fine_amount'];
 
     protected function casts(): array
     {
         return [
             'status' => TransactionStatus::class,
+            'fine_amount' => 'decimal:2',
         ];
     }
 
@@ -31,7 +35,7 @@ class Transaction extends Model
     {
         // Keep status and return_date in step, whichever one was edited
         static::saving(function (Transaction $loan): void {
-            if ($loan->status === TransactionStatus::Approved && filled($loan->return_date)) {
+            if ($loan->status?->holdsCopy() && filled($loan->return_date)) {
                 $loan->status = TransactionStatus::Returned;
             }
 
@@ -40,7 +44,7 @@ class Transaction extends Model
             }
         });
 
-        // A copy is off the shelf exactly while a loan is approved, however the status changes
+        // A copy is off the shelf exactly while the student has the book (on loan, or fine under review), however the status changes
         static::created(function (Transaction $loan): void {
             if ($loan->holdsCopy()) {
                 $loan->book?->decrement('stock');
@@ -52,7 +56,7 @@ class Transaction extends Model
                 return;
             }
 
-            $heldBefore = $loan->getOriginal('status') === TransactionStatus::Approved;
+            $heldBefore = (bool) $loan->getOriginal('status')?->holdsCopy();
 
             if ($loan->holdsCopy() && ! $heldBefore) {
                 $loan->book?->decrement('stock');
@@ -90,12 +94,26 @@ class Transaction extends Model
         return $query->where('status', TransactionStatus::Approved->value)->whereNull('return_date');
     }
 
-    // Requested or on loan: what counts toward a user's borrowing limit
+    // Requested, on loan, or fine under review: what counts toward a user's borrowing limit
     public function scopeOpen(Builder $query): Builder
     {
         return $query
-            ->whereIn('status', [TransactionStatus::Pending->value, TransactionStatus::Approved->value])
+            ->whereIn('status', [TransactionStatus::Pending->value, TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value])
             ->whereNull('return_date');
+    }
+
+    // Books physically with students: on loan, or awaiting fine verification
+    public function scopeCheckedOut(Builder $query): Builder
+    {
+        return $query
+            ->whereIn('status', [TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value])
+            ->whereNull('return_date');
+    }
+
+    // GCash receipts waiting for staff to check
+    public function scopeAwaitingFineReview(Builder $query): Builder
+    {
+        return $query->where('status', TransactionStatus::PendingFineVerification->value);
     }
 
     public function scopeOverdue(Builder $query): Builder
@@ -112,17 +130,71 @@ class Transaction extends Model
     // Ever lent out (approved, whether still out or since returned)
     public function scopeLent(Builder $query): Builder
     {
-        return $query->whereIn('status', [TransactionStatus::Approved->value, TransactionStatus::Returned->value]);
+        return $query->whereIn('status', [TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value, TransactionStatus::Returned->value]);
     }
 
     public function holdsCopy(): bool
     {
-        return $this->status === TransactionStatus::Approved;
+        return (bool) $this->status?->holdsCopy();
     }
 
     public function isPending(): bool
     {
         return $this->status === TransactionStatus::Pending;
+    }
+
+    public function isAwaitingFineReview(): bool
+    {
+        return $this->status === TransactionStatus::PendingFineVerification;
+    }
+
+    // Days past the due date (0 if not overdue)
+    public function daysOverdue(): int
+    {
+        return max(0, -$this->daysUntilDue());
+    }
+
+    // What's owed today; once a receipt is submitted, the amount charged then
+    public function fineDue(): float
+    {
+        return $this->isAwaitingFineReview() && $this->fine_amount !== null
+            ? (float) $this->fine_amount
+            : $this->daysOverdue() * static::FINE_PER_DAY;
+    }
+
+    public static function peso(float $amount): string
+    {
+        return '₱'.number_format($amount, 2);
+    }
+
+    // Student paid via GCash: lock in the fine and wait for staff to verify (the book isn't returned yet)
+    public function submitFinePayment(string $receiptPath): void
+    {
+        $this->update([
+            'fine_amount' => $this->daysOverdue() * static::FINE_PER_DAY,
+            'payment_receipt_path' => $receiptPath,
+            'fine_status' => 'Pending',
+            'status' => TransactionStatus::PendingFineVerification,
+        ]);
+    }
+
+    // Staff checked the receipt and have the book back
+    public function confirmFineAndReturn(): void
+    {
+        $this->update([
+            'fine_status' => 'Paid',
+            'status' => TransactionStatus::Returned,
+        ]);
+    }
+
+    // The receipt didn't check out: back to an ordinary overdue loan so the student can pay again
+    public function rejectFinePayment(): void
+    {
+        $this->update([
+            'fine_status' => 'None',
+            'fine_amount' => null,
+            'status' => TransactionStatus::Approved,
+        ]);
     }
 
     public function isActive(): bool

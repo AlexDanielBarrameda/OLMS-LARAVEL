@@ -38,6 +38,17 @@ return [
             'report' => false,
         ],
 
+        // GCash fine receipts: private, viewed by staff through short-lived signed URLs only
+        'receipts' => [
+            'driver' => 'local',
+            'root' => storage_path('app/private/receipts'),
+            'url' => env('APP_URL').'/receipt-files',
+            'visibility' => 'private',
+            'serve' => true,
+            'throw' => false,
+            'report' => false,
+        ],
+
         'public' => [
             'driver' => 'local',
             'root' => storage_path('app/public'),

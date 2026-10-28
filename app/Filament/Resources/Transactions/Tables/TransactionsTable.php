@@ -19,17 +19,18 @@ use Filament\Tables\Filters\SelectFilter;
 use Filament\Tables\Table;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 
 class TransactionsTable
 {
     public static function configure(Table $table): Table
     {
         return $table
-            // Requests waiting for review first, then overdue loans (most overdue on top), other loans by due date, then closed ones
+            // Things waiting on staff first (borrow requests, fine receipts), then overdue loans (most overdue on top), other loans by due date, then closed ones
             ->defaultSort(fn (Builder $query): Builder => $query
                 ->orderByRaw(
                     "CASE
-                        WHEN transactions.status = 'pending' THEN 0
+                        WHEN transactions.status IN ('pending', 'pending_fine_verification') THEN 0
                         WHEN transactions.status = 'approved' AND transactions.return_date IS NULL AND transactions.due_date < ? THEN 1
                         WHEN transactions.status = 'approved' AND transactions.return_date IS NULL THEN 2
                         ELSE 3
@@ -38,7 +39,7 @@ class TransactionsTable
                 )
                 ->orderBy('transactions.due_date'))
             ->recordClasses(fn (Transaction $record) => match (true) {
-                $record->isPending() => 'bg-transaction-pending',
+                $record->isPending(), $record->isAwaitingFineReview() => 'bg-transaction-pending',
                 $record->isOverdue() => 'bg-transaction-overdue',
                 default => null,
             })
@@ -54,9 +55,11 @@ class TransactionsTable
                 TextColumn::make('loan_status')
                     ->label('Status')
                     ->badge()
-                    ->state(fn (Transaction $record): string => $record->isActive()
-                        ? ($record->dueLabel() ?? TransactionStatus::Approved->getLabel())
-                        : $record->status->getLabel())
+                    ->state(fn (Transaction $record): string => match (true) {
+                        $record->isActive() => $record->dueLabel() ?? TransactionStatus::Approved->getLabel(),
+                        $record->isAwaitingFineReview() => $record->status->getLabel().' · '.Transaction::peso($record->fineDue()),
+                        default => $record->status->getLabel(),
+                    })
                     ->color(fn (Transaction $record): string => match (true) {
                         $record->isOverdue() => 'danger',
                         $record->dueLabel() !== null => 'warning',
@@ -89,6 +92,10 @@ class TransactionsTable
                     ->label('Pending requests')
                     ->toggle()
                     ->query(fn (Builder $query): Builder => $query->pending()),
+                Filter::make('fine_review')
+                    ->label('Fine payments to verify')
+                    ->toggle()
+                    ->query(fn (Builder $query): Builder => $query->awaitingFineReview()),
                 Filter::make('overdue')
                     ->label('Overdue only')
                     ->toggle()
@@ -99,6 +106,8 @@ class TransactionsTable
             ->actions([
                 static::approveAction(),
                 static::rejectAction(),
+                static::verifyPaymentAction(),
+                static::rejectPaymentAction(),
                 EditAction::make(),
                 DeleteAction::make(),
             ])
@@ -107,6 +116,82 @@ class TransactionsTable
                     DeleteBulkAction::make(),
                 ]),
             ]);
+    }
+
+    // Look at the student's GCash receipt, then take the book back
+    protected static function verifyPaymentAction(): Action
+    {
+        return Action::make('verifyPayment')
+            ->label('Verify Payment & Return')
+            ->icon('heroicon-m-check-badge')
+            ->color('success')
+            ->visible(fn (Transaction $record): bool => $record->isAwaitingFineReview())
+            ->modalIcon('heroicon-o-receipt-percent')
+            ->modalHeading(fn (Transaction $record): string => "Verify {$record->user->name}'s payment")
+            ->modalDescription(fn (Transaction $record): string => "Check the receipt, then confirm once you have \"{$record->book->title}\" back.")
+            ->modalContent(fn (Transaction $record) => view('filament.admin.fine-receipt', [
+                'loan' => $record,
+                'receiptUrl' => $record->payment_receipt_path
+                    ? Storage::disk('receipts')->temporaryUrl($record->payment_receipt_path, now()->addMinutes(15))
+                    : null,
+            ]))
+            ->modalWidth('lg')
+            ->modalSubmitActionLabel('Confirm & check in')
+            ->action(function (Transaction $record, Action $action): void {
+                $error = DB::transaction(function () use ($record): ?string {
+                    $loan = Transaction::lockForUpdate()->find($record->id);
+
+                    if (! $loan?->isAwaitingFineReview()) {
+                        return 'This payment has already been handled.';
+                    }
+
+                    // Marks the fine paid and returns the book (puts the copy back on the shelf)
+                    $loan->confirmFineAndReturn();
+
+                    return null;
+                });
+
+                if ($error) {
+                    Notification::make()->title("Can't verify this payment")->body($error)->danger()->send();
+
+                    $action->cancel();
+                }
+
+                app(LibraryNotifications::class)->finePaymentDecided($record->refresh(), accepted: true);
+
+                Notification::make()->title('Payment verified and book returned')->success()->send();
+            });
+    }
+
+    // The receipt doesn't check out: the loan goes back to overdue and the student is asked to pay again
+    protected static function rejectPaymentAction(): Action
+    {
+        return Action::make('rejectPayment')
+            ->label('Reject receipt')
+            ->icon('heroicon-m-x-mark')
+            ->color('danger')
+            ->visible(fn (Transaction $record): bool => $record->isAwaitingFineReview())
+            ->modalIcon('heroicon-o-x-circle')
+            ->modalIconColor('danger')
+            ->modalHeading('Reject this receipt?')
+            ->modalDescription(fn (Transaction $record): string => "{$record->user->name} will be asked to pay again. The book stays checked out to them.")
+            ->modalWidth('md')
+            ->schema([
+                Textarea::make('reason')
+                    ->label('Reason')
+                    ->placeholder('e.g. The amount paid doesn\'t match the fine.')
+                    ->required()
+                    ->rows(3)
+                    ->maxLength(500),
+            ])
+            ->modalSubmitActionLabel('Reject receipt')
+            ->action(function (Transaction $record, array $data): void {
+                $record->rejectFinePayment();
+
+                app(LibraryNotifications::class)->finePaymentDecided($record, accepted: false, reason: $data['reason']);
+
+                Notification::make()->title('Receipt rejected')->success()->send();
+            });
     }
 
     protected static function approveAction(): Action

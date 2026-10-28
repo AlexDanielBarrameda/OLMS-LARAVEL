@@ -233,6 +233,65 @@
         }
     }
 
+    /* Fine receipt in the "Verify Payment & Return" modal */
+    .bg-receipt {
+        display: grid;
+        gap: 0.875rem;
+    }
+
+    .bg-receipt-facts {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.75rem;
+        margin: 0;
+    }
+
+    .bg-receipt-facts dt {
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.02em;
+        text-transform: uppercase;
+        color: var(--gray-500);
+    }
+
+    .bg-receipt-facts dd {
+        margin: 0.125rem 0 0;
+        font-size: 0.875rem;
+        font-weight: 500;
+    }
+
+    .bg-receipt-facts .bg-receipt-amount {
+        font-size: 1.25rem;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .bg-receipt-image {
+        display: block;
+        max-height: 26rem;
+        overflow: auto;
+        border-radius: 0.75rem;
+        background: var(--gray-100);
+        box-shadow: inset 0 0 0 1px var(--gray-200);
+    }
+
+    .dark .bg-receipt-image {
+        background: rgb(255 255 255 / 0.04);
+        box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
+    }
+
+    .bg-receipt-image img {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+
+    .bg-receipt-hint {
+        margin: 0;
+        font-size: 0.8125rem;
+        color: var(--gray-500);
+    }
+
     /* Activity log: before/after details */
     .bg-activity {
         display: grid;

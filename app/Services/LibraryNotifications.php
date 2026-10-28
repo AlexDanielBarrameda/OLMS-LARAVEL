@@ -56,6 +56,53 @@ class LibraryNotifications
             ->sendToDatabase(User::staff()->get());
     }
 
+    // A student paid an overdue fine via GCash and uploaded the receipt
+    public function finePaymentSubmitted(Transaction $loan): void
+    {
+        Notification::make()
+            ->title('Fine payment to verify')
+            ->body("{$loan->user->name} paid ".Transaction::peso($loan->fineDue())." for \"{$loan->book->title}\" and is returning it.")
+            ->icon('heroicon-o-receipt-percent')
+            ->iconColor('info')
+            ->viewData(['transaction_id' => $loan->id])
+            ->actions([
+                Action::make('review')
+                    ->label('Verify payment')
+                    ->url(static::fineReviewUrl())
+                    ->markAsRead(),
+            ])
+            ->sendToDatabase(User::staff()->get());
+    }
+
+    // Staff decided on a fine payment: tell the student, and clear the alert for the other staff
+    public function finePaymentDecided(Transaction $loan, bool $accepted, ?string $reason = null): void
+    {
+        DB::table('notifications')
+            ->where('data->viewData->transaction_id', $loan->id)
+            ->where('data->title', 'Fine payment to verify')
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+
+        $notification = $accepted
+            ? Notification::make()
+                ->success()
+                ->title("\"{$loan->book->title}\" is returned")
+                ->body('Your payment of '.Transaction::peso((float) $loan->fine_amount).' was verified. Thank you!')
+            : Notification::make()
+                ->danger()
+                ->title('Your fine payment couldn\'t be verified')
+                ->body((filled($reason) ? $reason.' ' : '')."Please pay again for \"{$loan->book->title}\" and upload a clear receipt.");
+
+        $notification
+            ->actions([
+                Action::make('view')
+                    ->label('View my books')
+                    ->url(UserDashboard::getUrl(panel: 'user'))
+                    ->markAsRead(),
+            ])
+            ->sendToDatabase($loan->user);
+    }
+
     // The student withdrew the request: take the stale "New borrow request" alerts down and say why
     public function borrowCancelled(Transaction $loan): void
     {
@@ -152,6 +199,12 @@ class LibraryNotifications
             ->orWhere(fn (QueryBuilder $legacy) => $legacy
                 ->where('data->title', 'New borrow request')
                 ->where('data->body', static::requestBody($loan))));
+    }
+
+    // Transactions list filtered to receipts waiting for verification
+    public static function fineReviewUrl(): string
+    {
+        return TransactionResource::getUrl('index', ['filters' => ['fine_review' => ['isActive' => true]]], panel: 'admin');
     }
 
     // Transactions list with the "Pending requests" filter switched on

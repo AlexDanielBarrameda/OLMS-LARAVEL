@@ -33,6 +33,8 @@ class WelcomeWidget extends Widget
             },
             'pendingLoans' => Transaction::pending()->count(),
             'pendingLoansUrl' => LibraryNotifications::pendingRequestsUrl(),
+            'finesToVerify' => Transaction::awaitingFineReview()->count(),
+            'finesUrl' => LibraryNotifications::fineReviewUrl(),
             // Only super admins review acquisition requests
             'pendingBookRequests' => $user->isSuperAdmin() ? BookRequest::where('status', 'pending')->count() : 0,
             'bookRequestsUrl' => BookRequestResource::getUrl('index'),

@@ -22,7 +22,7 @@ class UserInfoWidget extends Widget
         return [
             'user' => Auth::user(),
             'currentlyBorrowed' => Transaction::where('user_id', Auth::id())
-                ->active()
+                ->checkedOut()
                 ->count(),
         ];
     }

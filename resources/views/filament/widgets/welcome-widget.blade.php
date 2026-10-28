@@ -10,8 +10,19 @@
                 </div>
             </div>
 
-            @if ($pendingLoans || $pendingBookRequests)
+            @if ($pendingLoans || $finesToVerify || $pendingBookRequests)
                 <div class="bg-welcome-actions">
+                    @if ($finesToVerify)
+                        <x-filament::button
+                            tag="a"
+                            :href="$finesUrl"
+                            color="info"
+                            icon="heroicon-m-receipt-percent"
+                        >
+                            Verify {{ $finesToVerify }} fine {{ str('payment')->plural($finesToVerify) }}
+                        </x-filament::button>
+                    @endif
+
                     @if ($pendingLoans)
                         <x-filament::button
                             tag="a"

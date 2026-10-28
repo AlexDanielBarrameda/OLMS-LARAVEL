@@ -17,8 +17,9 @@ class DashboardStats extends BaseWidget
     protected function getStats(): array
     {
         $titles = Book::count();
-        $borrowed = Transaction::active()->count();
+        $borrowed = Transaction::checkedOut()->count();
         $overdue = Transaction::overdue()->count();
+        $toVerify = Transaction::awaitingFineReview()->count();
 
         return [
             Stat::make('Total Books', number_format(Book::sum('stock')))
@@ -26,7 +27,7 @@ class DashboardStats extends BaseWidget
                 ->descriptionIcon('heroicon-m-book-open')
                 ->color('success'),
 
-            // Approved loans that haven't been returned yet
+            // Books still with students (on loan, or waiting for their fine payment to be verified)
             Stat::make('Borrowed Books', number_format($borrowed))
                 ->description('Books currently out')
                 ->descriptionIcon('heroicon-m-arrow-right-on-rectangle')
@@ -39,9 +40,13 @@ class DashboardStats extends BaseWidget
 
             // Overdue loans are what accrue fines
             Stat::make('Pending Fines', number_format($overdue))
-                ->description($overdue ? 'Overdue loans needing attention' : 'Nothing overdue')
-                ->descriptionIcon($overdue ? 'heroicon-m-exclamation-circle' : 'heroicon-m-check-circle')
-                ->color($overdue ? 'danger' : 'success'),
+                ->description(match (true) {
+                    $toVerify > 0 => ($overdue ? 'Overdue loans · ' : '').$toVerify.' '.str('payment')->plural($toVerify).' to verify',
+                    $overdue > 0 => 'Overdue loans needing attention',
+                    default => 'Nothing overdue',
+                })
+                ->descriptionIcon($overdue || $toVerify ? 'heroicon-m-exclamation-circle' : 'heroicon-m-check-circle')
+                ->color($overdue || $toVerify ? 'danger' : 'success'),
         ];
     }
 }

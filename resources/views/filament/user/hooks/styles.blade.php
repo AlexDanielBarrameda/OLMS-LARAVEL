@@ -148,6 +148,120 @@
         justify-content: center;
     }
 
+    /* Overdue fine modal: amount + GCash QR */
+    .bg-fine {
+        display: grid;
+        gap: 1.25rem;
+        align-items: start;
+    }
+
+    @media (min-width: 40rem) {
+        .bg-fine {
+            grid-template-columns: 11.5rem 1fr;
+        }
+    }
+
+    .bg-fine-qr {
+        justify-self: center;
+        width: 11.5rem;
+        border-radius: 0.875rem;
+        overflow: hidden;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 8px 24px -8px rgb(0 0 0 / 0.25);
+    }
+
+    .bg-fine-qr img {
+        display: block;
+        width: 100%;
+        height: auto;
+    }
+
+    .bg-fine-info {
+        display: grid;
+        gap: 1.25rem;
+    }
+
+    .bg-fine-amount-block {
+        padding: 1rem 1.125rem;
+        border-radius: 0.75rem;
+        background: rgb(239 68 68 / 0.06);
+        box-shadow: inset 0 0 0 1px rgb(239 68 68 / 0.2);
+    }
+
+    .bg-fine-label {
+        margin: 0;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+        color: var(--danger-600);
+    }
+
+    .dark .bg-fine-label {
+        color: var(--danger-400);
+    }
+
+    .bg-fine-amount {
+        margin: 0.125rem 0 0;
+        font-size: 2.25rem;
+        font-weight: 700;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+        font-variant-numeric: tabular-nums;
+        color: var(--gray-950);
+    }
+
+    .dark .bg-fine-amount {
+        color: white;
+    }
+
+    .bg-fine-breakdown {
+        margin: 0.25rem 0 0;
+        font-size: 0.8125rem;
+        color: var(--gray-500);
+    }
+
+    .bg-fine-steps {
+        display: grid;
+        gap: 0.625rem;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+        font-size: 0.875rem;
+        line-height: 1.45;
+        color: var(--gray-700);
+    }
+
+    .dark .bg-fine-steps {
+        color: var(--gray-300);
+    }
+
+    .bg-fine-steps li {
+        display: flex;
+        gap: 0.625rem;
+    }
+
+    .bg-fine-steps li > p {
+        margin: 0;
+    }
+
+    .bg-fine-steps li > span {
+        display: grid;
+        place-items: center;
+        flex-shrink: 0;
+        width: 1.375rem;
+        height: 1.375rem;
+        border-radius: 9999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: white;
+        background: var(--gray-950);
+    }
+
+    .dark .bg-fine-steps li > span {
+        color: var(--gray-950);
+        background: white;
+    }
+
     /* Requests awaiting approval: the book isn't theirs yet */
     .bg-books .fi-ta-record.bg-book-pending .bg-book-cover {
         opacity: 0.6;

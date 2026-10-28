@@ -5,6 +5,8 @@ namespace App\Filament\User\Widgets;
 use App\Enums\TransactionStatus;
 use App\Models\Transaction;
 use App\Services\LibraryNotifications;
+use Filament\Forms\Components\FileUpload;
+use Filament\Schemas\Components\View;
 use Illuminate\Database\Eloquent\Builder;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -50,6 +52,7 @@ class MyBorrowedBooksWidget extends BaseWidget
                 ->orderBy('due_date'))
             ->recordClasses(fn (Transaction $record) => match (true) {
                 $record->isPending() => 'bg-book-pending',
+                $record->isAwaitingFineReview() => null,
                 $record->daysUntilDue() < 0 => 'bg-book-overdue',
                 $record->daysUntilDue() <= Transaction::DUE_SOON_DAYS => 'bg-book-due-soon',
                 default => null,
@@ -94,17 +97,20 @@ class MyBorrowedBooksWidget extends BaseWidget
                         ->color(fn (Transaction $record) => $record->isOverdue() ? 'danger' : null),
 
                     Tables\Columns\TextColumn::make('due_status')
-                        ->state(fn (Transaction $record) => $record->isPending()
-                            ? TransactionStatus::Pending->getLabel()
-                            : $record->dueLabel())
+                        ->state(fn (Transaction $record) => match (true) {
+                            $record->isPending() => TransactionStatus::Pending->getLabel(),
+                            $record->isAwaitingFineReview() => 'Fine under review · '.Transaction::peso($record->fineDue()),
+                            default => $record->dueLabel(),
+                        })
                         ->badge()
                         ->color(fn (Transaction $record) => match (true) {
-                            $record->isPending() => 'info',
+                            $record->isPending(), $record->isAwaitingFineReview() => 'info',
                             $record->isOverdue() => 'danger',
                             default => 'warning',
                         })
                         ->icon(fn (Transaction $record) => match (true) {
                             $record->isPending() => 'heroicon-m-ellipsis-horizontal-circle',
+                            $record->isAwaitingFineReview() => 'heroicon-m-receipt-percent',
                             $record->isOverdue() => 'heroicon-m-exclamation-triangle',
                             default => 'heroicon-m-clock',
                         }),
@@ -115,7 +121,8 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->label('Return Book')
                     ->button()
                     ->color('success')
-                    ->visible(fn (Transaction $record) => $record->isActive())
+                    // Overdue books go through "returnOverdue" (fine payment) instead
+                    ->visible(fn (Transaction $record) => $record->isActive() && ! $record->isOverdue())
                     ->requiresConfirmation()
                     ->modalHeading('Confirm Return')
                     ->modalDescription('Are you sure you want to return this book?')
@@ -130,6 +137,58 @@ class MyBorrowedBooksWidget extends BaseWidget
                             ->send();
 
                         // 3. Shout out to the page that the tables need to refresh!
+                        $livewire->dispatch('update-book-tables');
+                    }),
+
+                // Overdue: pay the fine via GCash and upload the receipt; staff verify it and check the book in
+                Action::make('returnOverdue')
+                    ->label('Return Book')
+                    ->button()
+                    ->color('danger')
+                    ->visible(fn (Transaction $record) => $record->isOverdue())
+                    ->modalIcon('heroicon-o-receipt-percent')
+                    ->modalIconColor('danger')
+                    ->modalHeading('Return overdue book')
+                    ->modalDescription(fn (Transaction $record) => "\"{$record->book->title}\" is overdue, so there's a fine to pay before it can be returned.")
+                    ->modalWidth('2xl')
+                    ->schema(fn (Transaction $record) => [
+                        View::make('filament.user.fine-payment')->viewData([
+                            'days' => $record->daysOverdue(),
+                            'rate' => Transaction::peso(Transaction::FINE_PER_DAY),
+                            'amount' => Transaction::peso($record->fineDue()),
+                            'qrUrl' => asset('images/gcash-qr.png'),
+                        ]),
+                        FileUpload::make('receipt')
+                            ->label('Payment receipt / screenshot')
+                            ->helperText('A screenshot of the GCash confirmation, showing the amount and reference number. PNG or JPG, up to 5 MB.')
+                            ->required()
+                            ->image()
+                            ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
+                            ->maxSize(5120)
+                            ->disk('receipts')
+                            ->directory(now()->format('Y/m'))
+                            ->visibility('private'),
+                    ])
+                    ->modalSubmitActionLabel('Submit payment')
+                    ->action(function (Transaction $record, array $data, Component $livewire, Action $action) {
+                        // Re-check on the server: it must still be this student's overdue loan
+                        $loan = $record->fresh();
+
+                        if (! $loan?->isOverdue() || $loan->user_id !== Auth::id()) {
+                            Notification::make()->title('This book no longer needs a fine payment')->warning()->send();
+                            $action->cancel();
+                        }
+
+                        $loan->submitFinePayment($data['receipt']);
+
+                        app(LibraryNotifications::class)->finePaymentSubmitted($loan->load('user', 'book'));
+
+                        Notification::make()
+                            ->title('Payment submitted')
+                            ->body('Bring the book to the library desk. A librarian will verify your payment and check it in.')
+                            ->success()
+                            ->send();
+
                         $livewire->dispatch('update-book-tables');
                     }),
 
