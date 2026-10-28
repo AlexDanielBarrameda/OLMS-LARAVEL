@@ -2,9 +2,12 @@
     "agents": [
         "claude_code"
     ],
+    "cloud": true,
     "skills": [
+        "infer-conventions",
+        "deploying-to-cloud",
         "laravel-best-practices",
-        "pest-testing",
+        "testing-best-practices",
         "tailwindcss-development"
     ]
 }
