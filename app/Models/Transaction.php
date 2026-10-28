@@ -21,20 +21,65 @@ class Transaction extends Model
     // Overdue fine, in PHP, per day late
     public const FINE_PER_DAY = 5.00;
 
-    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'return_date', 'fine_status', 'payment_receipt_path', 'fine_amount'];
+    // Borrowing fee, in PHP, per 7 days
+    public const FEE_PER_WEEK = 15.00;
+
+    // Durations offered when requesting a book (days => label); "custom" takes any multiple of 7 up to MAX_DURATION_DAYS
+    public const DURATION_PRESETS = [
+        7 => '7 days',
+        14 => '14 days',
+        31 => '1 Month Promo (31 days)',
+    ];
+
+    // Preset prices. The month promo charges 28 days' price (₱60) for 31 days, so it can't come from the per-week rate.
+    public const PRESET_FEES = [
+        7 => 15.00,
+        14 => 30.00,
+        31 => 60.00,
+    ];
+
+    public const MAX_DURATION_DAYS = 84;
+
+    public const REFUND_PENDING = 'pending';
+
+    public const REFUNDED = 'refunded';
+
+    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'duration_days', 'fee_amount', 'borrow_receipt_path', 'refund_status', 'refund_receipt_path', 'refunded_at', 'return_date', 'fine_status', 'payment_receipt_path', 'fine_amount'];
 
     protected function casts(): array
     {
         return [
             'status' => TransactionStatus::class,
+            'duration_days' => 'integer',
+            'fee_amount' => 'decimal:2',
             'fine_amount' => 'decimal:2',
+            'refunded_at' => 'datetime',
         ];
+    }
+
+    // Preset durations use their listed price (e.g. the 31-day promo is ₱60); custom ones are ₱15 per 7 days
+    public static function feeFor(int $days): float
+    {
+        return static::PRESET_FEES[$days] ?? round($days / 7 * static::FEE_PER_WEEK, 2);
+    }
+
+    // A duration a student may request: one of the presets, or a custom multiple of 7 within the limit
+    public static function isValidDuration(int $days, bool $custom): bool
+    {
+        return $custom
+            ? $days >= 7 && $days <= static::MAX_DURATION_DAYS && $days % 7 === 0
+            : array_key_exists($days, static::DURATION_PRESETS);
     }
 
     protected static function booted(): void
     {
         // Keep status and return_date in step, whichever one was edited
         static::saving(function (Transaction $loan): void {
+            // A paid request that's rejected or cancelled is owed its fee back, whichever screen did it
+            if ($loan->status?->owesRefund() && (float) $loan->fee_amount > 0 && blank($loan->refund_status)) {
+                $loan->refund_status = static::REFUND_PENDING;
+            }
+
             if ($loan->status?->holdsCopy() && filled($loan->return_date)) {
                 $loan->status = TransactionStatus::Returned;
             }
@@ -114,6 +159,32 @@ class Transaction extends Model
     public function scopeAwaitingFineReview(Builder $query): Builder
     {
         return $query->where('status', TransactionStatus::PendingFineVerification->value);
+    }
+
+    // Paid, then rejected or cancelled, and not paid back yet
+    public function scopeRefundPending(Builder $query): Builder
+    {
+        return $query->where('refund_status', static::REFUND_PENDING);
+    }
+
+    public function isRefundPending(): bool
+    {
+        return $this->refund_status === static::REFUND_PENDING;
+    }
+
+    public function isRefunded(): bool
+    {
+        return $this->refund_status === static::REFUNDED;
+    }
+
+    // Staff sent the fee back via GCash; the screenshot is the proof
+    public function markRefunded(string $refundReceiptPath): void
+    {
+        $this->update([
+            'refund_status' => static::REFUNDED,
+            'refund_receipt_path' => $refundReceiptPath,
+            'refunded_at' => now(),
+        ]);
     }
 
     public function scopeOverdue(Builder $query): Builder
@@ -207,14 +278,20 @@ class Transaction extends Model
         return $this->isActive() && $this->daysUntilDue() < 0;
     }
 
-    // Lend the copy: the loan period starts on approval, not on the request
+    // Lend the copy: the paid-for period starts on approval, not on the request
     public function approve(): void
     {
         $this->update([
             'status' => TransactionStatus::Approved,
             'borrow_date' => today()->toDateString(),
-            'due_date' => today()->addDays(static::LOAN_DAYS)->toDateString(),
+            'due_date' => today()->addDays($this->loanDays())->toDateString(),
         ]);
+    }
+
+    // Days the student paid for (requests from before paid borrowing get the old default)
+    public function loanDays(): int
+    {
+        return $this->duration_days ?: static::LOAN_DAYS;
     }
 
     // Whole days until the due date: 0 on the due date, negative once overdue

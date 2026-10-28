@@ -98,7 +98,7 @@ class MyBorrowedBooksWidget extends BaseWidget
 
                     Tables\Columns\TextColumn::make('due_status')
                         ->state(fn (Transaction $record) => match (true) {
-                            $record->isPending() => TransactionStatus::Pending->getLabel(),
+                            $record->isPending() => TransactionStatus::Pending->getLabel().($record->duration_days ? ' · '.$record->duration_days.' days' : ''),
                             $record->isAwaitingFineReview() => 'Fine under review · '.Transaction::peso($record->fineDue()),
                             default => $record->dueLabel(),
                         })
@@ -150,12 +150,18 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->modalIconColor('danger')
                     ->modalHeading('Return overdue book')
                     ->modalDescription(fn (Transaction $record) => "\"{$record->book->title}\" is overdue, so there's a fine to pay before it can be returned.")
-                    ->modalWidth('2xl')
+                    ->modalWidth('lg')
                     ->schema(fn (Transaction $record) => [
-                        View::make('filament.user.fine-payment')->viewData([
-                            'days' => $record->daysOverdue(),
-                            'rate' => Transaction::peso(Transaction::FINE_PER_DAY),
+                        View::make('filament.user.payment')->viewData([
+                            'tone' => 'danger',
+                            'label' => 'Fine due',
                             'amount' => Transaction::peso($record->fineDue()),
+                            'breakdown' => $record->daysOverdue().' '.str('day')->plural($record->daysOverdue()).' late × '.Transaction::peso(Transaction::FINE_PER_DAY).' per day',
+                            'steps' => [
+                                'Scan the QR with GCash (or save it and upload it in GCash) and pay <strong>'.e(Transaction::peso($record->fineDue())).'</strong>.',
+                                'Upload a screenshot of your receipt below.',
+                                'Bring the book to the library desk. A librarian will verify your payment and check it in.',
+                            ],
                             'qrUrl' => asset('images/gcash-qr.png'),
                         ]),
                         FileUpload::make('receipt')
@@ -199,11 +205,14 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->visible(fn (Transaction $record) => $record->isPending())
                     ->requiresConfirmation()
                     ->modalHeading(fn (Transaction $record) => "Cancel your request for \"{$record->book->title}\"?")
+                    ->modalDescription(fn (Transaction $record) => $record->fee_amount
+                        ? 'The library will refund your '.Transaction::peso((float) $record->fee_amount).' fee via GCash.'
+                        : null)
                     ->modalSubmitActionLabel('Cancel request')
                     ->modalCancelActionLabel('Keep it')
                     ->action(function (Transaction $record, Component $livewire) {
-                        // Still pending, so no stock was taken
-                        $record->delete();
+                        // Still pending, so no stock was taken. Kept as "cancelled" (not deleted) so a paid fee is tracked until it's refunded.
+                        $record->update(['status' => TransactionStatus::Cancelled]);
 
                         app(LibraryNotifications::class)->borrowCancelled($record);
 

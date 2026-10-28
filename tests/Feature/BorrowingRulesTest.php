@@ -43,30 +43,73 @@ function loan(User $user, Book $book, string $dueDate = '2026-11-01', array $att
     ]);
 }
 
+// Blocked students can't even open the paid request form, so they never pay for a request that would be refused
 function expectBlocked(string $message): void
 {
-    $before = Transaction::count();
-
     Livewire::test(AvailableBooksWidget::class)
-        ->callTableAction('borrow', test()->book)
-        ->assertNotified("Can't request this book");
+        ->assertTableActionDisabled('borrow', test()->book);
 
-    expect(Transaction::count())->toBe($before)
+    expect(test()->user->accountBorrowingBlockedReason())->toContain($message)
         ->and(test()->user->borrowingBlockedReason(test()->book))->toContain($message);
 }
 
-it('sends a borrow request without taking stock, and tells the librarians', function () {
+function requestBorrow(array $data): \Livewire\Features\SupportTesting\Testable
+{
+    return Livewire::test(AvailableBooksWidget::class)
+        ->callTableAction('borrow', test()->book, data: [
+            'receipt' => \Illuminate\Http\UploadedFile::fake()->image('gcash.png', 400, 800),
+            ...$data,
+        ]);
+}
+
+it('sends a paid borrow request without taking stock, and tells the librarians', function () {
+    \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
     $librarian = User::factory()->create(['role' => 'librarian']);
 
-    Livewire::test(AvailableBooksWidget::class)
-        ->callTableAction('borrow', $this->book)
+    requestBorrow(['duration' => '14'])
+        ->assertHasNoTableActionErrors()
         ->assertNotified('Request sent');
 
     $request = $this->user->transactions()->sole();
 
     expect($request->status)->toBe(TransactionStatus::Pending)
+        ->and($request->duration_days)->toBe(14)
+        ->and($request->fee_amount)->toBe('30.00')
         ->and($this->book->fresh()->stock)->toBe(2)
         ->and($librarian->notifications()->first()->data['title'])->toBe('New borrow request');
+
+    \Illuminate\Support\Facades\Storage::disk('receipts')->assertExists($request->borrow_receipt_path);
+});
+
+it('prices ₱15 per 7 days, including custom multiples of 7', function () {
+    expect(Transaction::feeFor(7))->toBe(15.0)
+        ->and(Transaction::feeFor(14))->toBe(30.0)
+        ->and(Transaction::feeFor(28))->toBe(60.0)
+        ->and(Transaction::feeFor(49))->toBe(105.0);
+
+    \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
+    requestBorrow(['duration' => 'custom', 'custom_days' => 21])->assertHasNoTableActionErrors();
+
+    expect($this->user->transactions()->sole())
+        ->duration_days->toBe(21)
+        ->fee_amount->toBe('45.00');
+});
+
+it('only accepts custom durations in multiples of 7, up to the maximum', function () {
+    \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
+
+    requestBorrow(['duration' => 'custom', 'custom_days' => 20])->assertHasTableActionErrors(['custom_days']);
+    requestBorrow(['duration' => 'custom', 'custom_days' => 91])->assertHasTableActionErrors(['custom_days']);
+
+    expect(Transaction::count())->toBe(0);
+});
+
+it('requires a payment receipt', function () {
+    Livewire::test(AvailableBooksWidget::class)
+        ->callTableAction('borrow', $this->book, data: ['duration' => '7', 'receipt' => null])
+        ->assertHasTableActionErrors(['receipt' => 'required']);
+
+    expect(Transaction::count())->toBe(0);
 });
 
 it('labels the button by what the user already has', function () {
@@ -132,8 +175,28 @@ it('lets the user cancel a pending request', function () {
     Livewire::test(MyBorrowedBooksWidget::class)
         ->assertSee('Awaiting approval')
         ->assertTableActionHidden('return', $request)
-        ->callTableAction('cancelRequest', $request);
+        ->callTableAction('cancelRequest', $request)
+        ->assertDontSee('Awaiting approval');
 
-    expect(Transaction::find($request->id))->toBeNull()
+    // Kept as "cancelled" (an unpaid one owes nothing back)
+    expect($request->fresh())
+        ->status->toBe(TransactionStatus::Cancelled)
+        ->refund_status->toBeNull()
         ->and($this->book->fresh()->stock)->toBe(2);
+});
+
+it('offers the 1 Month Promo: 31 days for ₱60.00', function () {
+    expect(Transaction::DURATION_PRESETS[31])->toBe('1 Month Promo (31 days - 3 days free!)')
+        ->and(Transaction::feeFor(31))->toBe(60.0)
+        ->and(Transaction::isValidDuration(31, custom: false))->toBeTrue()
+        // 31 is only valid as the promo, not as a custom value
+        ->and(Transaction::isValidDuration(31, custom: true))->toBeFalse();
+
+    \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
+    requestBorrow(['duration' => '31'])->assertHasNoTableActionErrors()->assertNotified('Request sent');
+
+    expect($this->user->transactions()->sole())
+        ->duration_days->toBe(31)
+        ->fee_amount->toBe('60.00')
+        ->due_date->toBe('2026-11-24');
 });

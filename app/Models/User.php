@@ -76,18 +76,24 @@ class User extends Authenticatable implements FilamentUser
     // Why this user can't request $book right now, or null when they can
     public function borrowingBlockedReason(Book $book): ?string
     {
+        $existing = $this->transactions()->open()->where('book_id', $book->id)->first();
+
+        if ($existing && ! $this->transactions()->overdue()->exists()) {
+            return $existing->isPending()
+                ? "You've already requested \"{$book->title}\". A librarian will review it soon."
+                : "You already have \"{$book->title}\" borrowed.";
+        }
+
+        return $this->accountBorrowingBlockedReason();
+    }
+
+    // Blocks that apply to every book (overdue loans, the borrowing limit), so they can be shown before anyone pays a fee
+    public function accountBorrowingBlockedReason(): ?string
+    {
         $overdue = $this->transactions()->overdue()->count();
 
         if ($overdue > 0) {
             return "You have {$overdue} overdue ".str('book')->plural($overdue).'. Return '.($overdue === 1 ? 'it' : 'them').' before borrowing another.';
-        }
-
-        $existing = $this->transactions()->open()->where('book_id', $book->id)->first();
-
-        if ($existing) {
-            return $existing->isPending()
-                ? "You've already requested \"{$book->title}\". A librarian will review it soon."
-                : "You already have \"{$book->title}\" borrowed.";
         }
 
         // Pending requests count too, so the queue can't be flooded

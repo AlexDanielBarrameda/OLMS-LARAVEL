@@ -110,10 +110,50 @@ class LibraryNotifications
 
         Notification::make()
             ->title('Borrow request cancelled')
-            ->body("{$loan->user->name} cancelled their request for \"{$loan->book->title}\".")
+            ->body("{$loan->user->name} cancelled their request for \"{$loan->book->title}\"."
+                .($loan->fee_amount ? ' Refund their '.Transaction::peso((float) $loan->fee_amount).' fee via GCash.' : ''))
             ->icon('heroicon-o-x-circle')
             ->iconColor('gray')
+            ->actions($loan->isRefundPending() ? [
+                Action::make('refund')
+                    ->label('Process refund')
+                    ->url(static::refundsUrl())
+                    ->markAsRead(),
+            ] : [])
             ->sendToDatabase(User::staff()->get());
+    }
+
+    // A student paid, but the request couldn't go through (e.g. the last copy was just taken)
+    public function refundNeeded(Transaction $loan, string $reason): void
+    {
+        Notification::make()
+            ->title('Refund needed')
+            ->body("{$loan->user->name} paid ".Transaction::peso((float) $loan->fee_amount)." to borrow \"{$loan->book->title}\", but the request couldn't go through: {$reason}")
+            ->icon('heroicon-o-banknotes')
+            ->iconColor('warning')
+            ->actions([
+                Action::make('refund')
+                    ->label('Process refund')
+                    ->url(static::refundsUrl())
+                    ->markAsRead(),
+            ])
+            ->sendToDatabase(User::staff()->get());
+    }
+
+    // Staff sent a fee back via GCash
+    public function refundSent(Transaction $loan): void
+    {
+        Notification::make()
+            ->success()
+            ->title('Your '.Transaction::peso((float) $loan->fee_amount).' refund was sent')
+            ->body("The fee for \"{$loan->book->title}\" was sent back to your GCash. Check your GCash transaction history.")
+            ->sendToDatabase($loan->user);
+    }
+
+    // Transactions list filtered to fees waiting to be refunded
+    public static function refundsUrl(): string
+    {
+        return TransactionResource::getUrl('index', ['filters' => ['refunds' => ['isActive' => true]]], panel: 'admin');
     }
 
     public function borrowDecided(Transaction $loan, ?string $reason = null): void
@@ -131,7 +171,8 @@ class LibraryNotifications
             : Notification::make()
                 ->danger()
                 ->title("Your request for \"{$title}\" was declined")
-                ->body(filled($reason) ? $reason : 'Please contact the library for details.');
+                ->body((filled($reason) ? $reason : 'Please contact the library for details.')
+                    .($loan->fee_amount ? ' Your '.Transaction::peso((float) $loan->fee_amount).' fee will be refunded via GCash.' : ''));
 
         $notification
             ->actions([

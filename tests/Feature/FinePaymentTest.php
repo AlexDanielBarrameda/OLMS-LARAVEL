@@ -76,15 +76,17 @@ it('routes overdue books to the GCash fine form', function () {
         ->mountTableAction('returnOverdue', $this->loan)
         ->assertHasNoTableActionErrors();
 
-    // The fine + QR block inside that modal
-    $html = view('filament.user.fine-payment', [
-        'days' => $this->loan->daysOverdue(),
-        'rate' => Transaction::peso(Transaction::FINE_PER_DAY),
+    // The fine + QR block inside that modal (the same payment block the borrow form uses)
+    $html = view('filament.user.payment', [
+        'tone' => 'danger',
+        'label' => 'Fine due',
         'amount' => Transaction::peso($this->loan->fineDue()),
+        'breakdown' => '5 days late × ₱5.00 per day',
+        'steps' => ['Pay'],
         'qrUrl' => asset('images/gcash-qr.png'),
     ])->render();
 
-    expect($html)->toContain('₱25.00', '5 days late × ₱5.00 per day', 'images/gcash-qr.png');
+    expect($html)->toContain('₱25.00', '5 days late × ₱5.00 per day', 'images/gcash-qr.png', 'Save QR image');
 });
 
 it('requires a receipt', function () {

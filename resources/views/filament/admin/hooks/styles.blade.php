@@ -292,6 +292,18 @@
         color: var(--gray-500);
     }
 
+    .bg-receipt-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+    }
+
+    .bg-receipt-row > .fi-btn {
+        flex-shrink: 0;
+        white-space: nowrap;
+    }
+
     /* Activity log: before/after details */
     .bg-activity {
         display: grid;

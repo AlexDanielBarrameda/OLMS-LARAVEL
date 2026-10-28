@@ -148,59 +148,47 @@
         justify-content: center;
     }
 
-    /* Overdue fine modal: amount + GCash QR */
-    .bg-fine {
-        display: grid;
-        gap: 1.25rem;
-        align-items: start;
-    }
-
-    @media (min-width: 40rem) {
-        .bg-fine {
-            grid-template-columns: 11.5rem 1fr;
-        }
-    }
-
-    .bg-fine-qr {
-        justify-self: center;
-        width: 11.5rem;
-        border-radius: 0.875rem;
-        overflow: hidden;
-        box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 8px 24px -8px rgb(0 0 0 / 0.25);
-    }
-
-    .bg-fine-qr img {
-        display: block;
-        width: 100%;
-        height: auto;
-    }
-
-    .bg-fine-info {
+    /* GCash payment block (overdue fine + borrow fee): one column, with a large centered QR so it scans reliably */
+    .bg-pay {
         display: grid;
         gap: 1.25rem;
     }
 
-    .bg-fine-amount-block {
+    .bg-pay-amount-block {
         padding: 1rem 1.125rem;
         border-radius: 0.75rem;
+        background: var(--gray-50);
+        box-shadow: inset 0 0 0 1px var(--gray-200);
+    }
+
+    .dark .bg-pay-amount-block {
+        background: rgb(255 255 255 / 0.04);
+        box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.1);
+    }
+
+    .bg-pay-amount-block.bg-pay-danger {
         background: rgb(239 68 68 / 0.06);
         box-shadow: inset 0 0 0 1px rgb(239 68 68 / 0.2);
     }
 
-    .bg-fine-label {
+    .bg-pay-label {
         margin: 0;
         font-size: 0.75rem;
         font-weight: 500;
         letter-spacing: 0.04em;
         text-transform: uppercase;
+        color: var(--gray-500);
+    }
+
+    .bg-pay-danger .bg-pay-label {
         color: var(--danger-600);
     }
 
-    .dark .bg-fine-label {
+    .dark .bg-pay-danger .bg-pay-label {
         color: var(--danger-400);
     }
 
-    .bg-fine-amount {
+    .bg-pay-amount {
         margin: 0.125rem 0 0;
         font-size: 2.25rem;
         font-weight: 700;
@@ -210,17 +198,55 @@
         color: var(--gray-950);
     }
 
-    .dark .bg-fine-amount {
+    .dark .bg-pay-amount {
         color: white;
     }
 
-    .bg-fine-breakdown {
+    .bg-pay-breakdown {
         margin: 0.25rem 0 0;
         font-size: 0.8125rem;
         color: var(--gray-500);
     }
 
-    .bg-fine-steps {
+    /* 20rem wide: the code itself renders ~140px, sharp on retina since the source is 720px wide */
+    .bg-pay-qr {
+        display: grid;
+        justify-items: center;
+        gap: 0.625rem;
+        width: min(100%, 20rem);
+        margin: 0 auto;
+    }
+
+    .bg-pay-qr img {
+        display: block;
+        width: 100%;
+        height: auto;
+        object-fit: contain;
+        border-radius: 1rem;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 0.08), 0 12px 32px -12px rgb(0 0 0 / 0.3);
+    }
+
+    .bg-pay-qr-actions {
+        display: flex;
+        gap: 0.5rem;
+        font-size: 0.8125rem;
+        color: var(--gray-400);
+    }
+
+    .bg-pay-qr-actions a {
+        font-weight: 500;
+        color: var(--gray-700);
+        text-decoration: underline;
+        text-decoration-color: var(--gray-300);
+        text-underline-offset: 3px;
+    }
+
+    .dark .bg-pay-qr-actions a {
+        color: var(--gray-200);
+        text-decoration-color: var(--gray-600);
+    }
+
+    .bg-pay-steps {
         display: grid;
         gap: 0.625rem;
         margin: 0;
@@ -231,20 +257,20 @@
         color: var(--gray-700);
     }
 
-    .dark .bg-fine-steps {
+    .dark .bg-pay-steps {
         color: var(--gray-300);
     }
 
-    .bg-fine-steps li {
+    .bg-pay-steps li {
         display: flex;
         gap: 0.625rem;
     }
 
-    .bg-fine-steps li > p {
+    .bg-pay-steps li > p {
         margin: 0;
     }
 
-    .bg-fine-steps li > span {
+    .bg-pay-steps li > span {
         display: grid;
         place-items: center;
         flex-shrink: 0;
@@ -257,7 +283,7 @@
         background: var(--gray-950);
     }
 
-    .dark .bg-fine-steps li > span {
+    .dark .bg-pay-steps li > span {
         color: var(--gray-950);
         background: white;
     }

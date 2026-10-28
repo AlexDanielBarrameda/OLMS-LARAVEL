@@ -11,6 +11,7 @@ use Filament\Actions\BulkActionGroup;
 use Filament\Actions\DeleteAction;
 use Filament\Actions\DeleteBulkAction;
 use Filament\Actions\EditAction;
+use Filament\Forms\Components\FileUpload;
 use Filament\Forms\Components\Textarea;
 use Filament\Notifications\Notification;
 use Filament\Tables\Columns\TextColumn;
@@ -56,6 +57,7 @@ class TransactionsTable
                     ->label('Status')
                     ->badge()
                     ->state(fn (Transaction $record): string => match (true) {
+                        $record->isPending() && $record->duration_days => $record->status->getLabel().' · '.$record->duration_days.' days · '.Transaction::peso((float) $record->fee_amount),
                         $record->isActive() => $record->dueLabel() ?? TransactionStatus::Approved->getLabel(),
                         $record->isAwaitingFineReview() => $record->status->getLabel().' · '.Transaction::peso($record->fineDue()),
                         default => $record->status->getLabel(),
@@ -78,6 +80,18 @@ class TransactionsTable
                 TextColumn::make('return_date')
                     ->date()
                     ->sortable(),
+                TextColumn::make('refund_status')
+                    ->label('Refund')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state, Transaction $record): ?string => match ($state) {
+                        Transaction::REFUND_PENDING => 'Refund pending · '.Transaction::peso((float) $record->fee_amount),
+                        Transaction::REFUNDED => 'Refunded',
+                        default => null,
+                    })
+                    ->description(fn (Transaction $record): ?string => $record->isRefunded() ? $record->refunded_at?->format('M j, Y') : null)
+                    ->color(fn (?string $state): string => $state === Transaction::REFUNDED ? 'success' : 'warning')
+                    ->icon(fn (?string $state): string => $state === Transaction::REFUNDED ? 'heroicon-m-check-circle' : 'heroicon-m-banknotes')
+                    ->placeholder('—'),
                 TextColumn::make('fine_status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
@@ -96,6 +110,10 @@ class TransactionsTable
                     ->label('Fine payments to verify')
                     ->toggle()
                     ->query(fn (Builder $query): Builder => $query->awaitingFineReview()),
+                Filter::make('refunds')
+                    ->label('Refunds to process')
+                    ->toggle()
+                    ->query(fn (Builder $query): Builder => $query->refundPending()),
                 Filter::make('overdue')
                     ->label('Overdue only')
                     ->toggle()
@@ -108,6 +126,8 @@ class TransactionsTable
                 static::rejectAction(),
                 static::verifyPaymentAction(),
                 static::rejectPaymentAction(),
+                static::processRefundAction(),
+                static::viewRefundReceiptAction(),
                 EditAction::make(),
                 DeleteAction::make(),
             ])
@@ -116,6 +136,91 @@ class TransactionsTable
                     DeleteBulkAction::make(),
                 ]),
             ]);
+    }
+
+    // Send a rejected/cancelled request's fee back via GCash and keep the screenshot as proof
+    protected static function processRefundAction(): Action
+    {
+        return Action::make('processRefund')
+            ->label('Process Refund')
+            ->icon('heroicon-m-banknotes')
+            ->color('warning')
+            ->visible(fn (Transaction $record): bool => $record->isRefundPending())
+            ->modalIcon('heroicon-o-banknotes')
+            ->modalIconColor('warning')
+            ->modalHeading(fn (Transaction $record): string => 'Refund '.Transaction::peso((float) $record->fee_amount)." to {$record->user->name}")
+            ->modalDescription(fn (Transaction $record): string => "Their request for \"{$record->book->title}\" was ".strtolower($record->status->getLabel()).'. Send the fee back via GCash, then upload your screenshot as proof.')
+            ->modalContent(fn (Transaction $record) => view('filament.admin.refund', [
+                'loan' => $record,
+                'mode' => 'process',
+                'imageUrl' => static::receiptUrl($record->borrow_receipt_path),
+            ]))
+            ->modalWidth('lg')
+            ->schema([
+                FileUpload::make('refund_receipt')
+                    ->label('Refund GCash Screenshot')
+                    ->helperText('The GCash confirmation of the money you sent back, showing the amount and reference number.')
+                    ->required()
+                    ->image()
+                    ->acceptedFileTypes(['image/png', 'image/jpeg', 'image/webp'])
+                    ->maxSize(5120)
+                    ->disk('receipts')
+                    ->directory('refunds/'.now()->format('Y/m'))
+                    ->visibility('private'),
+            ])
+            ->modalSubmitActionLabel('Mark as refunded')
+            ->action(function (Transaction $record, array $data, Action $action): void {
+                $done = DB::transaction(function () use ($record, $data): bool {
+                    $loan = Transaction::lockForUpdate()->find($record->id);
+
+                    if (! $loan?->isRefundPending()) {
+                        return false;
+                    }
+
+                    $loan->markRefunded($data['refund_receipt']);
+
+                    return true;
+                });
+
+                if (! $done) {
+                    // Someone else already recorded it; drop the duplicate screenshot
+                    Storage::disk('receipts')->delete($data['refund_receipt']);
+                    Notification::make()->title('This refund was already recorded')->warning()->send();
+                    $action->cancel();
+                }
+
+                app(LibraryNotifications::class)->refundSent($record->refresh());
+
+                Notification::make()->title('Refund recorded')->success()->send();
+            });
+    }
+
+    // Audit: see the screenshot proving a refund was sent
+    protected static function viewRefundReceiptAction(): Action
+    {
+        return Action::make('viewRefundReceipt')
+            ->label('View Refund Receipt')
+            ->icon('heroicon-m-eye')
+            ->color('gray')
+            ->visible(fn (Transaction $record): bool => $record->isRefunded() && filled($record->refund_receipt_path))
+            ->modalIcon('heroicon-o-check-circle')
+            ->modalIconColor('success')
+            ->modalHeading(fn (Transaction $record): string => 'Refund to '.$record->user->name)
+            ->modalDescription(fn (Transaction $record): string => "Fee for \"{$record->book->title}\"")
+            ->modalContent(fn (Transaction $record) => view('filament.admin.refund', [
+                'loan' => $record,
+                'mode' => 'view',
+                'imageUrl' => static::receiptUrl($record->refund_receipt_path),
+            ]))
+            ->modalWidth('lg')
+            ->modalSubmitAction(false)
+            ->modalCancelActionLabel('Close');
+    }
+
+    // Short-lived signed link to a file on the private receipts disk
+    protected static function receiptUrl(?string $path): ?string
+    {
+        return $path ? Storage::disk('receipts')->temporaryUrl($path, now()->addMinutes(15)) : null;
     }
 
     // Look at the student's GCash receipt, then take the book back
@@ -201,11 +306,17 @@ class TransactionsTable
             ->icon('heroicon-m-check')
             ->color('success')
             ->visible(fn (Transaction $record): bool => $record->isPending())
-            ->requiresConfirmation()
             ->modalIcon('heroicon-o-check-circle')
             ->modalHeading(fn (Transaction $record): string => "Lend \"{$record->book->title}\" to {$record->user->name}?")
-            ->modalDescription(fn (Transaction $record): string => $record->book->stock.' '.str('copy')->plural($record->book->stock)
-                .' on the shelf. It will be due back on '.today()->addDays(Transaction::LOAN_DAYS)->format('M j').'.')
+            ->modalDescription(fn (Transaction $record): string => $record->book->stock.' '.str('copy')->plural($record->book->stock).' on the shelf.')
+            // Requested duration, fee and GCash receipt; the loan runs for the paid-for days from today
+            ->modalContent(fn (Transaction $record) => view('filament.admin.borrow-request', [
+                'loan' => $record,
+                'receiptUrl' => $record->borrow_receipt_path
+                    ? Storage::disk('receipts')->temporaryUrl($record->borrow_receipt_path, now()->addMinutes(15))
+                    : null,
+            ]))
+            ->modalWidth('lg')
             ->modalSubmitActionLabel('Approve')
             ->action(function (Transaction $record, Action $action): void {
                 // Lock the request and the book so two librarians can't lend the last copy twice
@@ -249,7 +360,8 @@ class TransactionsTable
             ->modalIcon('heroicon-o-x-circle')
             ->modalIconColor('danger')
             ->modalHeading(fn (Transaction $record): string => "Reject {$record->user->name}'s request?")
-            ->modalDescription(fn (Transaction $record): string => "\"{$record->book->title}\" won't be lent. The student is notified either way.")
+            ->modalDescription(fn (Transaction $record): string => "\"{$record->book->title}\" won't be lent, and {$record->user->name} is notified."
+                .($record->fee_amount ? ' Remember to refund their '.Transaction::peso((float) $record->fee_amount).' fee via GCash.' : ''))
             ->modalWidth('md')
             ->schema([
                 Textarea::make('reason')

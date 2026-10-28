@@ -45,6 +45,32 @@ it('approves a request: takes a copy, starts the loan today, and tells the stude
         ->and($this->student->notifications()->first()->data['title'])->toBe('Your request for "Dune" was approved');
 });
 
+it('lends for the paid-for duration, starting on approval', function () {
+    $this->request->update(['duration_days' => 28, 'fee_amount' => 60]);
+
+    Livewire::test(ListTransactions::class)
+        ->assertSee('Awaiting approval · 28 days · ₱60.00')
+        ->callTableAction('approve', $this->request);
+
+    expect($this->request->fresh())
+        ->borrow_date->toBe('2026-10-26')
+        ->due_date->toBe('2026-11-23');
+
+    // Shown to staff in the approve modal
+    $html = view('filament.admin.borrow-request', ['loan' => $this->request->fresh(), 'receiptUrl' => 'https://example.test/r.png'])->render();
+    expect($html)->toContain('28 days', '₱60.00', 'View receipt');
+});
+
+it('tells the student their fee will be refunded when a paid request is rejected', function () {
+    $this->request->update(['duration_days' => 7, 'fee_amount' => 15]);
+
+    Livewire::test(ListTransactions::class)
+        ->callTableAction('reject', $this->request, data: ['reason' => 'Book is reserved.']);
+
+    expect($this->student->notifications()->first()->data['body'])
+        ->toBe('Book is reserved. Your ₱15.00 fee will be refunded via GCash.');
+});
+
 it("won't approve when the book is out of stock", function () {
     $this->book->update(['stock' => 0]);
 

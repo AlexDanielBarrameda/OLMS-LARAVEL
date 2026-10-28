@@ -13,6 +13,8 @@ enum TransactionStatus: string implements HasColor, HasIcon, HasLabel
     // Overdue book: the student paid the fine via GCash and uploaded a receipt; staff still have to check it and take the book back
     case PendingFineVerification = 'pending_fine_verification';
     case Rejected = 'rejected';
+    // The student withdrew their request (kept, not deleted, so a paid fee can be refunded and audited)
+    case Cancelled = 'cancelled';
     case Returned = 'returned';
 
     public function getLabel(): string
@@ -22,6 +24,7 @@ enum TransactionStatus: string implements HasColor, HasIcon, HasLabel
             self::Approved => 'On loan',
             self::PendingFineVerification => 'Fine under review',
             self::Rejected => 'Rejected',
+            self::Cancelled => 'Cancelled',
             self::Returned => 'Returned',
         };
     }
@@ -34,6 +37,7 @@ enum TransactionStatus: string implements HasColor, HasIcon, HasLabel
             self::Approved => 'Approved',
             self::PendingFineVerification => 'Fine paid',
             self::Rejected => 'Rejected',
+            self::Cancelled => 'Cancelled',
             self::Returned => 'Returned',
         };
     }
@@ -45,7 +49,7 @@ enum TransactionStatus: string implements HasColor, HasIcon, HasLabel
             self::Approved => 'success',
             self::PendingFineVerification => 'info',
             self::Rejected => 'danger',
-            self::Returned => 'gray',
+            self::Cancelled, self::Returned => 'gray',
         };
     }
 
@@ -56,8 +60,15 @@ enum TransactionStatus: string implements HasColor, HasIcon, HasLabel
             self::Approved => 'heroicon-m-check-circle',
             self::PendingFineVerification => 'heroicon-m-receipt-percent',
             self::Rejected => 'heroicon-m-x-circle',
+            self::Cancelled => 'heroicon-m-minus-circle',
             self::Returned => 'heroicon-m-arrow-uturn-left',
         };
+    }
+
+    // Paid requests that end this way are owed their fee back
+    public function owesRefund(): bool
+    {
+        return $this === self::Rejected || $this === self::Cancelled;
     }
 
     // The student still has the book: it's off the shelf

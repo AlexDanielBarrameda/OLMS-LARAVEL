@@ -27,6 +27,17 @@ class BorrowingHistoryWidget extends BaseWidget
                 Tables\Columns\TextColumn::make('book.title')->label('Book'),
                 Tables\Columns\TextColumn::make('book.author')->label('Author'),
                 Tables\Columns\TextColumn::make('status')->badge(),
+                // Fee refunds for rejected or cancelled paid requests
+                Tables\Columns\TextColumn::make('refund_status')
+                    ->label('Refund')
+                    ->badge()
+                    ->formatStateUsing(fn (?string $state, Transaction $record) => match ($state) {
+                        Transaction::REFUNDED => 'Refunded '.Transaction::peso((float) $record->fee_amount),
+                        Transaction::REFUND_PENDING => 'Refund pending · '.Transaction::peso((float) $record->fee_amount),
+                        default => null,
+                    })
+                    ->color(fn (?string $state) => $state === Transaction::REFUNDED ? 'success' : 'warning')
+                    ->placeholder('—'),
                 Tables\Columns\TextColumn::make('borrow_date')
                     ->date()
                     ->label('Borrow Date'),
