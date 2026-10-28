@@ -22,11 +22,13 @@ class TransactionForm
                     ->relationship('book', 'title')
                     ->searchable()
                     ->required(),
-                // Approving here (a desk loan) takes a copy off the shelf; Returned puts it back
+                // Read-only: status only changes through the table actions (Approve, Reject, Verify Return...), which check payments and returns.
+                // A loan created here is a desk loan, saved as "On loan" by CreateTransaction.
                 Select::make('status')
                     ->options(TransactionStatus::class)
                     ->default(TransactionStatus::Approved)
-                    ->required()
+                    ->disabled()
+                    ->dehydrated(false)
                     ->native(false),
                 DatePicker::make('borrow_date')
                     ->default(now())
@@ -34,7 +36,10 @@ class TransactionForm
                 DatePicker::make('due_date')
                     ->default(now()->addDays(Transaction::LOAN_DAYS))
                     ->required(),
-                DatePicker::make('return_date'),
+                // Read-only too: a return date marks the loan returned (see Transaction::saving), so only "Verify Return" sets it
+                DatePicker::make('return_date')
+                    ->disabled()
+                    ->dehydrated(false),
                 Select::make('fine_status')
                     ->options([
                         'None' => 'None',

@@ -45,9 +45,9 @@ it('clears register errors when switching back to the login tab', function () {
 
 it('asks for the password twice and rejects a mismatch', function () {
     Livewire::test(Login::class)
-        ->assertDontSee('Confirm Password')
+        ->assertDontSee('Confirm password')
         ->set('isLogin', false)
-        ->assertSee('Confirm Password')
+        ->assertSee('Confirm password')
         ->set('name', 'test acc')
         ->set('email', 'test@gmail.com')
         ->set('password', 'testacc123')
@@ -76,4 +76,8 @@ it('registers a student and redirects to the user panel', function () {
         ->and($user->role)->toBe('student');
 
     $this->assertAuthenticatedAs($user);
+});
+
+it("doesn't offer Filament's own sign-up page, which bypasses the throttled form", function () {
+    $this->get('/user/register')->assertNotFound();
 });

@@ -37,6 +37,10 @@ class WelcomeWidget extends Widget
             'finesUrl' => LibraryNotifications::fineReviewUrl(),
             'refundsToProcess' => Transaction::refundPending()->count(),
             'refundsUrl' => LibraryNotifications::refundsUrl(),
+            'returnsToVerify' => Transaction::awaitingReturn()->count(),
+            'returnsUrl' => LibraryNotifications::returnsUrl(),
+            'paymentsToCheck' => Transaction::awaitingPaymentCheck()->count(),
+            'paymentChecksUrl' => LibraryNotifications::paymentChecksUrl(),
             // Only super admins review acquisition requests
             'pendingBookRequests' => $user->isSuperAdmin() ? BookRequest::where('status', 'pending')->count() : 0,
             'bookRequestsUrl' => BookRequestResource::getUrl('index'),

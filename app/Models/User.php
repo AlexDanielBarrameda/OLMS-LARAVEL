@@ -9,10 +9,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Spatie\Activitylog\Traits\CausesActivity;
-use Filament\Models\Contracts\FilamentUser; // 1. Added import
-use Filament\Panel; // 2. Added import
+use Filament\Models\Contracts\FilamentUser;
+use Filament\Panel;
 
-// 3. Implemented FilamentUser interface
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
@@ -62,6 +61,18 @@ class User extends Authenticatable implements FilamentUser
         return $this->hasMany(Transaction::class);
     }
 
+    // Uses a loaded transactions_count when the query has one (e.g. the Users table), so per-row checks don't query
+    public function hasTransactions(): bool
+    {
+        return isset($this->transactions_count) ? $this->transactions_count > 0 : $this->transactions()->exists();
+    }
+
+    // Deactivated by an admin: can't sign in or open either panel. Older rows store "Inactive", newer ones "inactive".
+    public function isInactive(): bool
+    {
+        return strcasecmp((string) $this->status, 'inactive') === 0;
+    }
+
     public function bookRequests()
     {
         return $this->hasMany(BookRequest::class, 'requested_by');
@@ -73,24 +84,27 @@ class User extends Authenticatable implements FilamentUser
         return $query->whereIn('role', ['super_admin', 'librarian']);
     }
 
-    // Why this user can't request $book right now, or null when they can
+    // Why this user can't request $book right now, or null when they can. An overdue block wins over "already borrowed",
+    // since it's the one the student has to act on.
     public function borrowingBlockedReason(Book $book): ?string
     {
-        $existing = $this->transactions()->open()->where('book_id', $book->id)->first();
+        $overdue = $this->transactions()->overdue()->count();
+        $existing = $overdue ? null : $this->transactions()->open()->where('book_id', $book->id)->first();
 
-        if ($existing && ! $this->transactions()->overdue()->exists()) {
+        if ($existing) {
             return $existing->isPending()
                 ? "You've already requested \"{$book->title}\". A librarian will review it soon."
                 : "You already have \"{$book->title}\" borrowed.";
         }
 
-        return $this->accountBorrowingBlockedReason();
+        return $this->accountBorrowingBlockedReason($overdue);
     }
 
-    // Blocks that apply to every book (overdue loans, the borrowing limit), so they can be shown before anyone pays a fee
-    public function accountBorrowingBlockedReason(): ?string
+    // Blocks that apply to every book (overdue loans, the borrowing limit), so they can be shown before anyone pays a fee.
+    // Pass the overdue count if you already have it.
+    public function accountBorrowingBlockedReason(?int $overdue = null): ?string
     {
-        $overdue = $this->transactions()->overdue()->count();
+        $overdue ??= $this->transactions()->overdue()->count();
 
         if ($overdue > 0) {
             return "You have {$overdue} overdue ".str('book')->plural($overdue).'. Return '.($overdue === 1 ? 'it' : 'them').' before borrowing another.';
@@ -104,26 +118,20 @@ class User extends Authenticatable implements FilamentUser
         return null;
     }
 
-    /**
-     * 4. Filament access control logic.
-     * This acts as the absolute gatekeeper for your panels.
-     */
-    public function canAccessPanel(\Filament\Panel $panel): bool
+    // Staff use the admin panel, students the user panel; deactivated accounts get neither (even with a session still open)
+    public function canAccessPanel(Panel $panel): bool
     {
-        if ($panel->getId() === 'admin') {
-            // Allow both super admins and librarians into the admin panel
-            return in_array($this->role, ['super_admin', 'librarian']);
+        if ($this->isInactive()) {
+            return false;
         }
 
-        if ($panel->getId() === 'user') {
-            // Regular users/students go here
-            return in_array($this->role, ['user', 'student']); 
-        }
-
-        return false;
+        return match ($panel->getId()) {
+            'admin' => in_array($this->role, ['super_admin', 'librarian']),
+            'user' => in_array($this->role, ['user', 'student']),
+            default => false,
+        };
     }
 
-    // Add these helper methods right below it for easier checking later!
     public function isSuperAdmin(): bool
     {
         return $this->role === 'super_admin';

@@ -42,6 +42,12 @@ class Book extends Model
         return $this->hasMany(Transaction::class);
     }
 
+    // Uses a loaded transactions_count when the query has one (e.g. the Books table), so per-row checks don't query
+    public function hasTransactions(): bool
+    {
+        return isset($this->transactions_count) ? $this->transactions_count > 0 : $this->transactions()->exists();
+    }
+
     public function scopeLowStock(Builder $query): Builder
     {
         return $query->where('stock', '<=', static::LOW_STOCK);

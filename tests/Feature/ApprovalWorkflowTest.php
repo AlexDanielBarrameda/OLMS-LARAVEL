@@ -46,29 +46,99 @@ it('approves a request: takes a copy, starts the loan today, and tells the stude
 });
 
 it('lends for the paid-for duration, starting on approval', function () {
-    $this->request->update(['duration_days' => 28, 'fee_amount' => 60]);
+    $this->request->update(['duration_days' => 28, 'fee_amount' => 60, 'gcash_reference' => '1012345678901']);
 
     Livewire::test(ListTransactions::class)
         ->assertSee('Awaiting approval · 28 days · ₱60.00')
-        ->callTableAction('approve', $this->request);
+        ->callTableAction('approve', $this->request, data: ['payment_found' => true])
+        ->assertHasNoTableActionErrors();
 
     expect($this->request->fresh())
         ->borrow_date->toBe('2026-10-26')
-        ->due_date->toBe('2026-11-23');
+        ->due_date->toBe('2026-11-23')
+        ->payment_verified_by->toBe($this->librarian->id)
+        ->payment_verified_at->not->toBeNull();
 
     // Shown to staff in the approve modal
     $html = view('filament.admin.borrow-request', ['loan' => $this->request->fresh(), 'receiptUrl' => 'https://example.test/r.png'])->render();
-    expect($html)->toContain('28 days', '₱60.00', 'View receipt');
+    expect($html)->toContain('28 days', '₱60.00', '1012345678901', 'View receipt');
 });
 
-it('tells the student their fee will be refunded when a paid request is rejected', function () {
-    $this->request->update(['duration_days' => 7, 'fee_amount' => 15]);
+it("won't approve a paid request until staff confirm the payment arrived", function () {
+    $this->request->update(['duration_days' => 7, 'fee_amount' => 15, 'gcash_reference' => '1012345678901']);
+
+    Livewire::test(ListTransactions::class)
+        ->callTableAction('approve', $this->request, data: ['payment_found' => false])
+        ->assertHasTableActionErrors(['payment_found' => 'accepted']);
+
+    expect($this->request->fresh())
+        ->status->toBe(TransactionStatus::Pending)
+        ->payment_verified_at->toBeNull();
+});
+
+it('refunds a rejected paid request only if staff found the payment', function () {
+    $this->request->update(['duration_days' => 7, 'fee_amount' => 15, 'gcash_reference' => '1012345678901']);
+
+    Livewire::test(ListTransactions::class)
+        ->callTableAction('reject', $this->request, data: ['reason' => 'Book is reserved.', 'payment_found' => true]);
+
+    expect($this->request->fresh()->refund_status)->toBe(Transaction::REFUND_PENDING)
+        ->and($this->student->notifications()->first()->data['body'])
+        ->toBe('Book is reserved. Your ₱15.00 fee will be refunded via GCash.');
+});
+
+it('leaves an unchecked payment waiting for a check when a paid request is rejected', function () {
+    $this->request->update(['duration_days' => 7, 'fee_amount' => 15, 'gcash_reference' => '1012345678901']);
 
     Livewire::test(ListTransactions::class)
         ->callTableAction('reject', $this->request, data: ['reason' => 'Book is reserved.']);
 
-    expect($this->student->notifications()->first()->data['body'])
-        ->toBe('Book is reserved. Your ₱15.00 fee will be refunded via GCash.');
+    expect($this->request->fresh())
+        ->refund_status->toBeNull()
+        ->needsPaymentCheck()->toBeTrue()
+        ->and($this->student->notifications()->first()->data['body'])
+        ->toBe('Book is reserved. The library will refund your ₱15.00 once staff confirm your GCash payment.');
+});
+
+it("won't reject a request someone already approved", function () {
+    $form = Livewire::test(ListTransactions::class)->mountTableAction('reject', $this->request);
+
+    // Another librarian approves it while this one's modal is open
+    $this->request->approve($this->librarian);
+
+    $form->callMountedTableAction();
+
+    expect($this->request->fresh()->status)->toBe(TransactionStatus::Approved)
+        ->and($this->book->fresh()->stock)->toBe(1);
+});
+
+it('only changes status through the table actions, not the edit form', function () {
+    $this->request->update(['duration_days' => 7, 'fee_amount' => 15, 'gcash_reference' => '1012345678901']);
+
+    Livewire::test(EditTransaction::class, ['record' => $this->request->getRouteKey()])
+        ->assertFormFieldIsDisabled('status')
+        ->assertFormFieldIsDisabled('return_date')
+        // Even if the browser sends a new status, it isn't saved
+        ->set('data.status', TransactionStatus::Approved->value)
+        ->set('data.return_date', '2026-10-26')
+        ->call('save')
+        ->assertHasNoFormErrors();
+
+    expect($this->request->fresh())
+        ->status->toBe(TransactionStatus::Pending)
+        ->return_date->toBeNull()
+        ->payment_verified_at->toBeNull()
+        ->and($this->book->fresh()->stock)->toBe(2);
+});
+
+it('saves a loan created at the desk as on loan', function () {
+    Livewire::test(\App\Filament\Resources\Transactions\Pages\CreateTransaction::class)
+        ->fillForm(['user_id' => $this->student->id, 'book_id' => $this->book->id, 'status' => TransactionStatus::Returned->value])
+        ->call('create')
+        ->assertHasNoFormErrors();
+
+    expect(Transaction::latest('id')->first()->status)->toBe(TransactionStatus::Approved)
+        ->and($this->book->fresh()->stock)->toBe(1);
 });
 
 it("won't approve when the book is out of stock", function () {
@@ -96,7 +166,7 @@ it('rejects a request with a reason, without touching stock', function () {
 });
 
 it('only offers approve and reject on pending requests', function () {
-    $this->request->approve();
+    $this->request->approve($this->librarian);
 
     Livewire::test(ListTransactions::class)
         ->assertTableActionHidden('approve', $this->request)
@@ -174,7 +244,7 @@ it('marks the request alert read for everyone once a librarian decides', functio
 });
 
 it('keeps stock right however a loan changes', function () {
-    $this->request->approve();
+    $this->request->approve($this->librarian);
     expect($this->book->fresh()->stock)->toBe(1);
 
     // Staff setting a return date in the edit form closes the loan and returns the copy

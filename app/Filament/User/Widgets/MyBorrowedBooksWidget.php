@@ -12,12 +12,13 @@ use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget as BaseWidget;
 use Filament\Tables\Columns\Layout\Stack;
-use Filament\Actions\Action; // Corrected import for Filament v4
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
-use Livewire\Attributes\On; // <-- Added for event listening
-use Livewire\Component; // <-- Added to dispatch events
+use Illuminate\Support\Facades\DB;
+use Livewire\Attributes\On;
+use Livewire\Component;
 
 class MyBorrowedBooksWidget extends BaseWidget
 {
@@ -26,7 +27,7 @@ class MyBorrowedBooksWidget extends BaseWidget
     protected int | string | array $columnSpan = 'full';
     protected static ?string $heading = 'My Books';
 
-    // 1. Listen for changes (like when a book is borrowed)
+    // Refresh when another widget changes a loan (a new borrow request)
     #[On('update-book-tables')]
     public function refreshBorrowedBooks(): void {}
 
@@ -52,7 +53,8 @@ class MyBorrowedBooksWidget extends BaseWidget
                 ->orderBy('due_date'))
             ->recordClasses(fn (Transaction $record) => match (true) {
                 $record->isPending() => 'bg-book-pending',
-                $record->isAwaitingFineReview() => null,
+                // An unconfirmed return past its due date still shows as overdue
+                $record->isAwaitingFineReview(), $record->isAwaitingReturn() && ! $record->isOverdue() => null,
                 $record->daysUntilDue() < 0 => 'bg-book-overdue',
                 $record->daysUntilDue() <= Transaction::DUE_SOON_DAYS => 'bg-book-due-soon',
                 default => null,
@@ -71,7 +73,8 @@ class MyBorrowedBooksWidget extends BaseWidget
                         ->imageWidth('100%')
                         ->imageHeight('auto')
                         ->extraImgAttributes(fn (Transaction $record) => [
-                            'alt' => e($record->book->title),
+                            // Decorative: the title is printed right below, so screen readers shouldn't hear it twice
+                            'alt' => '',
                             'loading' => 'lazy',
                             'class' => 'bg-book-cover',
                             'onerror' => "this.onerror=null;this.src='{$record->book->fallbackCoverUrl()}'",
@@ -100,17 +103,21 @@ class MyBorrowedBooksWidget extends BaseWidget
                         ->state(fn (Transaction $record) => match (true) {
                             $record->isPending() => TransactionStatus::Pending->getLabel().($record->duration_days ? ' · '.$record->duration_days.' days' : ''),
                             $record->isAwaitingFineReview() => 'Fine under review · '.Transaction::peso($record->fineDue()),
+                            $record->isAwaitingReturn() => 'Awaiting check-in'.($record->isOverdue() ? ' · overdue' : ''),
                             default => $record->dueLabel(),
                         })
                         ->badge()
                         ->color(fn (Transaction $record) => match (true) {
-                            $record->isPending(), $record->isAwaitingFineReview() => 'info',
+                            // The student has already paid: show the review as in progress, not as an alarm
+                            $record->isAwaitingFineReview() => 'info',
                             $record->isOverdue() => 'danger',
+                            $record->isPending(), $record->isAwaitingReturn() => 'info',
                             default => 'warning',
                         })
                         ->icon(fn (Transaction $record) => match (true) {
                             $record->isPending() => 'heroicon-m-ellipsis-horizontal-circle',
                             $record->isAwaitingFineReview() => 'heroicon-m-receipt-percent',
+                            $record->isAwaitingReturn() => 'heroicon-m-arrow-uturn-left',
                             $record->isOverdue() => 'heroicon-m-exclamation-triangle',
                             default => 'heroicon-m-clock',
                         }),
@@ -120,23 +127,40 @@ class MyBorrowedBooksWidget extends BaseWidget
                 Action::make('return')
                     ->label('Return Book')
                     ->button()
-                    ->color('success')
+                    ->color('primary')
                     // Overdue books go through "returnOverdue" (fine payment) instead
                     ->visible(fn (Transaction $record) => $record->isActive() && ! $record->isOverdue())
                     ->requiresConfirmation()
-                    ->modalHeading('Confirm Return')
-                    ->modalDescription('Are you sure you want to return this book?')
-                    // 2. Inject $livewire into the closure
-                    ->action(function (Transaction $record, Component $livewire) {
-                        // Marking it returned sets the return date and puts the copy back on the shelf
-                        $record->update(['status' => TransactionStatus::Returned]);
+                    ->modalHeading('Return this book?')
+                    ->modalDescription('Bring it to the library desk. It stays on your account until a librarian checks it in.')
+                    ->modalSubmitActionLabel('Return book')
+                    // Only staff put the copy back on the shelf: this just tells them it's coming
+                    ->action(function (Transaction $record, Component $livewire, Action $action) {
+                        $returned = DB::transaction(function () use ($record): ?Transaction {
+                            $loan = Transaction::lockForUpdate()->find($record->id);
+
+                            if (! $loan?->isActive() || $loan->isOverdue() || $loan->user_id !== Auth::id()) {
+                                return null;
+                            }
+
+                            $loan->requestReturn();
+
+                            return $loan;
+                        });
+
+                        if (! $returned) {
+                            Notification::make()->title('This book can\'t be returned this way any more')->warning()->send();
+                            $action->cancel();
+                        }
+
+                        app(LibraryNotifications::class)->returnRequested($returned->load('user', 'book'));
 
                         Notification::make()
-                            ->title('Book Returned Successfully!')
+                            ->title('Return requested')
+                            ->body('Bring the book to the library desk. A librarian will check it in.')
                             ->success()
                             ->send();
 
-                        // 3. Shout out to the page that the tables need to refresh!
                         $livewire->dispatch('update-book-tables');
                     }),
 
@@ -145,7 +169,8 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->label('Return Book')
                     ->button()
                     ->color('danger')
-                    ->visible(fn (Transaction $record) => $record->isOverdue())
+                    // Loans still with the student; an overdue return waiting for check-in is staff's call ("Verify Return" or "Not received")
+                    ->visible(fn (Transaction $record) => $record->isActive() && $record->isOverdue())
                     ->modalIcon('heroicon-o-receipt-percent')
                     ->modalIconColor('danger')
                     ->modalHeading('Return overdue book')
@@ -180,7 +205,7 @@ class MyBorrowedBooksWidget extends BaseWidget
                         // Re-check on the server: it must still be this student's overdue loan
                         $loan = $record->fresh();
 
-                        if (! $loan?->isOverdue() || $loan->user_id !== Auth::id()) {
+                        if (! $loan?->isActive() || ! $loan->isOverdue() || $loan->user_id !== Auth::id()) {
                             Notification::make()->title('This book no longer needs a fine payment')->warning()->send();
                             $action->cancel();
                         }
@@ -205,9 +230,7 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->visible(fn (Transaction $record) => $record->isPending())
                     ->requiresConfirmation()
                     ->modalHeading(fn (Transaction $record) => "Cancel your request for \"{$record->book->title}\"?")
-                    ->modalDescription(fn (Transaction $record) => $record->fee_amount
-                        ? 'The library will refund your '.Transaction::peso((float) $record->fee_amount).' fee via GCash.'
-                        : null)
+                    ->modalDescription(fn (Transaction $record) => LibraryNotifications::refundPromise($record))
                     ->modalSubmitActionLabel('Cancel request')
                     ->modalCancelActionLabel('Keep it')
                     ->action(function (Transaction $record, Component $livewire) {

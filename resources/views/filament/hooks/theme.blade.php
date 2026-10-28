@@ -131,11 +131,11 @@
     }
 
     .bg-avatar-link.is-active {
-        box-shadow: 0 0 0 2px white, 0 0 0 4px rgb(16 185 129);
+        box-shadow: 0 0 0 2px white, 0 0 0 4px var(--primary-600);
     }
 
     .dark .bg-avatar-link.is-active {
-        box-shadow: 0 0 0 2px var(--gray-900), 0 0 0 4px rgb(16 185 129);
+        box-shadow: 0 0 0 2px var(--gray-900), 0 0 0 4px var(--primary-400);
     }
 
     .bg-avatar-link:focus-visible {

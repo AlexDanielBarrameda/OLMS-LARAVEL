@@ -44,7 +44,16 @@ class Transaction extends Model
 
     public const REFUNDED = 'refunded';
 
-    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'duration_days', 'fee_amount', 'borrow_receipt_path', 'refund_status', 'refund_receipt_path', 'refunded_at', 'return_date', 'fine_status', 'payment_receipt_path', 'fine_amount'];
+    // Staff looked for the GCash reference and the money never arrived: nothing to refund
+    public const REFUND_NOT_PAID = 'not_paid';
+
+    // Shown in the Refund column for an ended paid request nobody has checked yet. Never stored: refund_status is null until staff decide.
+    public const PAYMENT_UNCHECKED = 'unchecked';
+
+    // A GCash "Ref No." is exactly 13 digits (the column, the form and the validation all use this)
+    public const GCASH_REFERENCE_LENGTH = 13;
+
+    protected $fillable = ['user_id', 'book_id', 'status', 'borrow_date', 'due_date', 'duration_days', 'fee_amount', 'gcash_reference', 'payment_verified_at', 'payment_verified_by', 'borrow_receipt_path', 'refund_status', 'refund_receipt_path', 'refunded_at', 'return_date', 'return_requested_at', 'fine_status', 'payment_receipt_path', 'fine_amount'];
 
     protected function casts(): array
     {
@@ -54,6 +63,8 @@ class Transaction extends Model
             'fee_amount' => 'decimal:2',
             'fine_amount' => 'decimal:2',
             'refunded_at' => 'datetime',
+            'payment_verified_at' => 'datetime',
+            'return_requested_at' => 'datetime',
         ];
     }
 
@@ -75,8 +86,9 @@ class Transaction extends Model
     {
         // Keep status and return_date in step, whichever one was edited
         static::saving(function (Transaction $loan): void {
-            // A paid request that's rejected or cancelled is owed its fee back, whichever screen did it
-            if ($loan->status?->owesRefund() && (float) $loan->fee_amount > 0 && blank($loan->refund_status)) {
+            // A paid request that's rejected or cancelled is owed its fee back, whichever screen did it,
+            // but only once staff have confirmed the money actually arrived (a screenshot alone proves nothing)
+            if ($loan->status?->owesRefund() && $loan->isPaid() && $loan->isPaymentVerified() && blank($loan->refund_status)) {
                 $loan->refund_status = static::REFUND_PENDING;
             }
 
@@ -117,7 +129,6 @@ class Transaction extends Model
         });
     }
 
-    // Let's also set up the relationships so Filament can link them easily
     public function user()
     {
         return $this->belongsTo(User::class);
@@ -139,20 +150,46 @@ class Transaction extends Model
         return $query->where('status', TransactionStatus::Approved->value)->whereNull('return_date');
     }
 
-    // Requested, on loan, or fine under review: what counts toward a user's borrowing limit
+    // Requested, on loan, fine under review, or return not yet checked in: what counts toward a user's borrowing limit
     public function scopeOpen(Builder $query): Builder
     {
         return $query
-            ->whereIn('status', [TransactionStatus::Pending->value, TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value])
+            ->whereIn('status', [TransactionStatus::Pending->value, ...static::copyHoldingStatuses()])
             ->whereNull('return_date');
     }
 
-    // Books physically with students: on loan, or awaiting fine verification
+    // Books not back on the shelf: on loan, awaiting fine verification, or handed in but not checked in
     public function scopeCheckedOut(Builder $query): Builder
     {
         return $query
-            ->whereIn('status', [TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value])
+            ->whereIn('status', static::copyHoldingStatuses())
             ->whereNull('return_date');
+    }
+
+    // Returns waiting for staff to check the book in
+    public function scopeAwaitingReturn(Builder $query): Builder
+    {
+        return $query->where('status', TransactionStatus::PendingReturn->value);
+    }
+
+    // Paid requests rejected or cancelled before staff confirmed the payment: someone has to check GCash before any refund
+    public function scopeAwaitingPaymentCheck(Builder $query): Builder
+    {
+        return $query
+            ->whereIn('status', [TransactionStatus::Rejected->value, TransactionStatus::Cancelled->value])
+            ->where('fee_amount', '>', 0)
+            ->whereNull('payment_verified_at')
+            ->whereNull('refund_status');
+    }
+
+    /** @return list<string> */
+    protected static function copyHoldingStatuses(): array
+    {
+        return collect(TransactionStatus::cases())
+            ->filter(fn (TransactionStatus $status): bool => $status->holdsCopy())
+            ->map(fn (TransactionStatus $status): string => $status->value)
+            ->values()
+            ->all();
     }
 
     // GCash receipts waiting for staff to check
@@ -177,6 +214,34 @@ class Transaction extends Model
         return $this->refund_status === static::REFUNDED;
     }
 
+    public function isPaid(): bool
+    {
+        return (float) $this->fee_amount > 0;
+    }
+
+    public function isPaymentVerified(): bool
+    {
+        return $this->payment_verified_at !== null;
+    }
+
+    // An ended paid request whose payment nobody has confirmed yet
+    public function needsPaymentCheck(): bool
+    {
+        return (bool) $this->status?->owesRefund() && $this->isPaid() && ! $this->isPaymentVerified() && blank($this->refund_status);
+    }
+
+    // Staff found the GCash reference in the library's account. On a rejected/cancelled request this queues the refund (see saving()).
+    public function verifyPayment(User $staff): void
+    {
+        $this->update(['payment_verified_at' => now(), 'payment_verified_by' => $staff->id]);
+    }
+
+    // Staff couldn't find the payment: close the request without a refund
+    public function markPaymentNotFound(): void
+    {
+        $this->update(['refund_status' => static::REFUND_NOT_PAID]);
+    }
+
     // Staff sent the fee back via GCash; the screenshot is the proof
     public function markRefunded(string $refundReceiptPath): void
     {
@@ -187,9 +252,14 @@ class Transaction extends Model
         ]);
     }
 
+    // Past due and not back on the shelf. A requested return or a fine receipt still counts until staff confirm it,
+    // so neither a claimed return nor an unchecked (possibly fake) receipt lifts the overdue block.
     public function scopeOverdue(Builder $query): Builder
     {
-        return $query->active()->whereDate('due_date', '<', today()->toDateString());
+        return $query
+            ->whereIn('status', static::copyHoldingStatuses())
+            ->whereNull('return_date')
+            ->whereDate('due_date', '<', today()->toDateString());
     }
 
     // Overdue or due within DUE_SOON_DAYS
@@ -201,7 +271,7 @@ class Transaction extends Model
     // Ever lent out (approved, whether still out or since returned)
     public function scopeLent(Builder $query): Builder
     {
-        return $query->whereIn('status', [TransactionStatus::Approved->value, TransactionStatus::PendingFineVerification->value, TransactionStatus::Returned->value]);
+        return $query->whereIn('status', [...static::copyHoldingStatuses(), TransactionStatus::Returned->value]);
     }
 
     public function holdsCopy(): bool
@@ -217,6 +287,35 @@ class Transaction extends Model
     public function isAwaitingFineReview(): bool
     {
         return $this->status === TransactionStatus::PendingFineVerification;
+    }
+
+    public function isAwaitingReturn(): bool
+    {
+        return $this->status === TransactionStatus::PendingReturn;
+    }
+
+    // The student says they've handed the book in. It stays checked out (and counts toward their limit) until staff check it in.
+    public function requestReturn(): void
+    {
+        $this->update([
+            'status' => TransactionStatus::PendingReturn,
+            'return_requested_at' => now(),
+        ]);
+    }
+
+    // Staff have the book: back on the shelf
+    public function confirmReturn(): void
+    {
+        $this->update(['status' => TransactionStatus::Returned]);
+    }
+
+    // Staff don't have the book: it's still on loan (and accrues fines once overdue)
+    public function rejectReturn(): void
+    {
+        $this->update([
+            'status' => TransactionStatus::Approved,
+            'return_requested_at' => null,
+        ]);
     }
 
     // Days past the due date (0 if not overdue)
@@ -236,6 +335,12 @@ class Transaction extends Model
     public static function peso(float $amount): string
     {
         return '₱'.number_format($amount, 2);
+    }
+
+    // The borrowing fee, e.g. "₱30.00"
+    public function feeLabel(): string
+    {
+        return static::peso((float) $this->fee_amount);
     }
 
     // Student paid via GCash: lock in the fine and wait for staff to verify (the book isn't returned yet)
@@ -273,19 +378,34 @@ class Transaction extends Model
         return $this->status === TransactionStatus::Approved && blank($this->return_date);
     }
 
+    // Same rule as scopeOverdue(): an unconfirmed return or fine payment past its due date is still overdue
     public function isOverdue(): bool
     {
-        return $this->isActive() && $this->daysUntilDue() < 0;
+        return $this->holdsCopy() && blank($this->return_date) && $this->daysUntilDue() < 0;
     }
 
-    // Lend the copy: the paid-for period starts on approval, not on the request
-    public function approve(): void
+    // Lend the copy: the paid-for period starts on approval, not on the request. Approving a paid request confirms its payment.
+    public function approve(User $staff): void
     {
+        if ($this->isPaid() && ! $this->isPaymentVerified()) {
+            $this->verifyPayment($staff);
+        }
+
         $this->update([
             'status' => TransactionStatus::Approved,
             'borrow_date' => today()->toDateString(),
             'due_date' => today()->addDays($this->loanDays())->toDateString(),
         ]);
+    }
+
+    // Turn the request down. If staff found the payment, the refund is queued (see saving()); otherwise it waits for a payment check.
+    public function reject(User $staff, bool $paymentFound): void
+    {
+        if ($paymentFound && $this->isPaid() && ! $this->isPaymentVerified()) {
+            $this->verifyPayment($staff);
+        }
+
+        $this->update(['status' => TransactionStatus::Rejected]);
     }
 
     // Days the student paid for (requests from before paid borrowing get the old default)

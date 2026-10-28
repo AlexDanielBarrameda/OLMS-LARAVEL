@@ -15,7 +15,7 @@
             /* Hides Alpine.js elements before they fully load */
             [x-cloak] { display: none !important; }
             
-            /* 1. Force the Notification Manager to float top-right */
+            /* Notifications float top-right */
             .fi-no {
                 position: fixed !important;
                 top: 2rem !important;
@@ -29,7 +29,7 @@
                 max-width: 24rem !important;
             }
 
-            /* 2. Style the Notification Card to look like a premium toast */
+            /* Notification card */
             .fi-no-notification {
                 pointer-events: auto !important;
                 background-color: white !important;
@@ -43,14 +43,14 @@
                 animation: slideIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) !important;
             }
 
-            /* 3. Keep the SVG icons perfectly sized */
+            /* Notification icons */
             .fi-no-notification svg {
                 width: 1.5rem !important;
                 height: 1.5rem !important;
                 flex-shrink: 0 !important;
             }
 
-            /* 4. Typography for Title and Body */
+            /* Notification title and body */
             .fi-no-notification-title {
                 font-weight: 600 !important;
                 color: #111827 !important;
@@ -64,7 +64,7 @@
                 line-height: 1.25rem !important;
             }
 
-            /* 5. Force the correct colors for the icon (Red for error, Green for success) */
+            /* Semantic icon colors: red for errors, green for success */
             .text-danger-600 { color: #ef4444 !important; }
             .text-success-600 { color: #10b981 !important; }
 

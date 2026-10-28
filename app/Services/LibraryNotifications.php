@@ -110,34 +110,100 @@ class LibraryNotifications
 
         Notification::make()
             ->title('Borrow request cancelled')
-            ->body("{$loan->user->name} cancelled their request for \"{$loan->book->title}\"."
-                .($loan->fee_amount ? ' Refund their '.Transaction::peso((float) $loan->fee_amount).' fee via GCash.' : ''))
+            ->body(static::sentences("{$loan->user->name} cancelled their request for \"{$loan->book->title}\".", static::refundStep($loan)))
             ->icon('heroicon-o-x-circle')
             ->iconColor('gray')
-            ->actions($loan->isRefundPending() ? [
-                Action::make('refund')
-                    ->label('Process refund')
-                    ->url(static::refundsUrl())
-                    ->markAsRead(),
-            ] : [])
+            ->actions(static::refundActions($loan))
             ->sendToDatabase(User::staff()->get());
     }
 
-    // A student paid, but the request couldn't go through (e.g. the last copy was just taken)
+    // A student says they paid, but the request couldn't go through (e.g. the last copy was just taken)
     public function refundNeeded(Transaction $loan, string $reason): void
     {
         Notification::make()
-            ->title('Refund needed')
-            ->body("{$loan->user->name} paid ".Transaction::peso((float) $loan->fee_amount)." to borrow \"{$loan->book->title}\", but the request couldn't go through: {$reason}")
+            ->title('Payment to check')
+            ->body(static::sentences("{$loan->user->name} says they paid {$loan->feeLabel()} to borrow \"{$loan->book->title}\", but the request couldn't go through: {$reason}", static::refundStep($loan)))
             ->icon('heroicon-o-banknotes')
             ->iconColor('warning')
+            ->actions(static::refundActions($loan))
+            ->sendToDatabase(User::staff()->get());
+    }
+
+    // Staff searched the library's GCash for the reference and found nothing
+    public function paymentNotFound(Transaction $loan): void
+    {
+        Notification::make()
+            ->danger()
+            ->title('We couldn\'t find your payment')
+            ->body("No GCash payment with reference {$loan->gcash_reference} reached the library for \"{$loan->book->title}\", so there's nothing to refund. If you did pay, bring your GCash receipt to the library desk.")
+            ->sendToDatabase($loan->user);
+    }
+
+    // What staff do about the fee on an ended request: refund a confirmed payment, or check an unconfirmed one first (null when there was no fee)
+    protected static function refundStep(Transaction $loan): ?string
+    {
+        return match (true) {
+            ! $loan->isPaid() => null,
+            $loan->isRefundPending() => 'Refund their '.$loan->feeLabel().' fee via GCash.',
+            default => 'Check that their '.$loan->feeLabel()." payment (ref {$loan->gcash_reference}) reached the library's GCash before refunding it.",
+        };
+    }
+
+    /** @return array<Action> */
+    protected static function refundActions(Transaction $loan): array
+    {
+        return match (true) {
+            $loan->isRefundPending() => [Action::make('refund')->label('Process refund')->url(static::refundsUrl())->markAsRead()],
+            $loan->needsPaymentCheck() => [Action::make('check')->label('Check payment')->url(static::paymentChecksUrl())->markAsRead()],
+            default => [],
+        };
+    }
+
+    // The student handed a book in; staff check it in
+    public function returnRequested(Transaction $loan): void
+    {
+        Notification::make()
+            ->title('Return to verify')
+            ->body("{$loan->user->name} is returning \"{$loan->book->title}\". Check it in once you have it.")
+            ->icon('heroicon-o-arrow-uturn-left')
+            ->iconColor('info')
+            ->viewData(['transaction_id' => $loan->id])
             ->actions([
-                Action::make('refund')
-                    ->label('Process refund')
-                    ->url(static::refundsUrl())
+                Action::make('review')
+                    ->label('Verify returns')
+                    ->url(static::returnsUrl())
                     ->markAsRead(),
             ])
             ->sendToDatabase(User::staff()->get());
+    }
+
+    // Staff checked the book in, or didn't find it: tell the student, and clear the alert for the other staff
+    public function returnDecided(Transaction $loan, bool $accepted, ?string $reason = null): void
+    {
+        DB::table('notifications')
+            ->where('data->viewData->transaction_id', $loan->id)
+            ->where('data->title', 'Return to verify')
+            ->whereNull('read_at')
+            ->update(['read_at' => now()]);
+
+        $notification = $accepted
+            ? Notification::make()
+                ->success()
+                ->title("\"{$loan->book->title}\" is returned")
+                ->body('Thanks for bringing it back!')
+            : Notification::make()
+                ->danger()
+                ->title("We haven't received \"{$loan->book->title}\"")
+                ->body((filled($reason) ? $reason.' ' : '').'It\'s still on loan to you. Please bring it to the library desk.');
+
+        $notification
+            ->actions([
+                Action::make('view')
+                    ->label('View my books')
+                    ->url(UserDashboard::getUrl(panel: 'user'))
+                    ->markAsRead(),
+            ])
+            ->sendToDatabase($loan->user);
     }
 
     // Staff sent a fee back via GCash
@@ -145,7 +211,7 @@ class LibraryNotifications
     {
         Notification::make()
             ->success()
-            ->title('Your '.Transaction::peso((float) $loan->fee_amount).' refund was sent')
+            ->title('Your '.$loan->feeLabel().' refund was sent')
             ->body("The fee for \"{$loan->book->title}\" was sent back to your GCash. Check your GCash transaction history.")
             ->sendToDatabase($loan->user);
     }
@@ -154,6 +220,18 @@ class LibraryNotifications
     public static function refundsUrl(): string
     {
         return TransactionResource::getUrl('index', ['filters' => ['refunds' => ['isActive' => true]]], panel: 'admin');
+    }
+
+    // Transactions list filtered to ended paid requests whose payment nobody has confirmed
+    public static function paymentChecksUrl(): string
+    {
+        return TransactionResource::getUrl('index', ['filters' => ['payment_checks' => ['isActive' => true]]], panel: 'admin');
+    }
+
+    // Transactions list filtered to books handed in but not checked in yet
+    public static function returnsUrl(): string
+    {
+        return TransactionResource::getUrl('index', ['filters' => ['returns' => ['isActive' => true]]], panel: 'admin');
     }
 
     public function borrowDecided(Transaction $loan, ?string $reason = null): void
@@ -171,8 +249,7 @@ class LibraryNotifications
             : Notification::make()
                 ->danger()
                 ->title("Your request for \"{$title}\" was declined")
-                ->body((filled($reason) ? $reason : 'Please contact the library for details.')
-                    .($loan->fee_amount ? ' Your '.Transaction::peso((float) $loan->fee_amount).' fee will be refunded via GCash.' : ''));
+                ->body(static::sentences(filled($reason) ? $reason : 'Please contact the library for details.', static::refundPromise($loan)));
 
         $notification
             ->actions([
@@ -225,6 +302,22 @@ class LibraryNotifications
                         ->markAsRead(),
             ])
             ->sendToDatabase($request->requester);
+    }
+
+    // What a student whose paid request ended can expect (null when there was no fee)
+    public static function refundPromise(Transaction $loan): ?string
+    {
+        return match (true) {
+            ! $loan->isPaid() => null,
+            $loan->isPaymentVerified() => 'Your '.$loan->feeLabel().' fee will be refunded via GCash.',
+            default => 'The library will refund your '.$loan->feeLabel().' once staff confirm your GCash payment.',
+        };
+    }
+
+    // Joins sentences with single spaces, skipping empty ones
+    public static function sentences(?string ...$sentences): string
+    {
+        return implode(' ', array_filter($sentences));
     }
 
     protected static function requestBody(Transaction $loan): string

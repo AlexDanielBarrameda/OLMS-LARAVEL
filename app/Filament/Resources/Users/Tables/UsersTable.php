@@ -29,20 +29,18 @@ class UsersTable
                         'student' => 'info',
                         default => 'gray',
                     }),
+                // Every borrow request and loan, past or present (also what decides whether the account can be deleted)
                 TextColumn::make('transactions_count')
-                    ->counts('transactions') // Automatically counts the relationship
-                    ->label('Borrowed Books')
+                    ->counts('transactions')
+                    ->label('Transactions')
                     ->sortable(),
                 TextColumn::make('status')
                     ->badge()
                     ->color(fn (string $state): string => match ($state) {
                         'Active' => 'success',
-                        'Inactive' => 'gray', // Matches your Figma inactive color
+                        'Inactive' => 'gray',
                         default => 'primary',
                     }),
-            ])
-            ->filters([
-                //
             ])
             ->actions([
                 ViewAction::make(),
@@ -51,7 +49,8 @@ class UsersTable
             ])
             ->bulkActions([
                 BulkActionGroup::make([
-                    DeleteBulkAction::make(),
+                    // Checks each account, so ones with borrowing history are skipped (and reported) instead of failing the whole delete
+                    DeleteBulkAction::make()->authorizeIndividualRecords('delete'),
                 ]),
             ]);
     }

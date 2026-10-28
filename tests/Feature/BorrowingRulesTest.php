@@ -57,6 +57,7 @@ function requestBorrow(array $data): \Livewire\Features\SupportTesting\Testable
 {
     return Livewire::test(AvailableBooksWidget::class)
         ->callTableAction('borrow', test()->book, data: [
+            'gcash_reference' => (string) fake()->unique()->numerify('#############'),
             'receipt' => \Illuminate\Http\UploadedFile::fake()->image('gcash.png', 400, 800),
             ...$data,
         ]);
@@ -66,13 +67,15 @@ it('sends a paid borrow request without taking stock, and tells the librarians',
     \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
     $librarian = User::factory()->create(['role' => 'librarian']);
 
-    requestBorrow(['duration' => '14'])
+    requestBorrow(['duration' => '14', 'gcash_reference' => '1012345678901'])
         ->assertHasNoTableActionErrors()
         ->assertNotified('Request sent');
 
     $request = $this->user->transactions()->sole();
 
     expect($request->status)->toBe(TransactionStatus::Pending)
+        ->and($request->gcash_reference)->toBe('1012345678901')
+        ->and($request->payment_verified_at)->toBeNull()
         ->and($request->duration_days)->toBe(14)
         ->and($request->fee_amount)->toBe('30.00')
         ->and($this->book->fresh()->stock)->toBe(2)
@@ -102,6 +105,20 @@ it('only accepts custom durations in multiples of 7, up to the maximum', functio
     requestBorrow(['duration' => 'custom', 'custom_days' => 91])->assertHasTableActionErrors(['custom_days']);
 
     expect(Transaction::count())->toBe(0);
+});
+
+it('requires a valid, unused 13-digit GCash reference number', function () {
+    \Illuminate\Support\Facades\Storage::fake('receipts', ['serve' => true]);
+
+    requestBorrow(['duration' => '7', 'gcash_reference' => null])->assertHasTableActionErrors(['gcash_reference' => 'required']);
+    requestBorrow(['duration' => '7', 'gcash_reference' => '12345'])->assertHasTableActionErrors(['gcash_reference']);
+    requestBorrow(['duration' => '7', 'gcash_reference' => '10123456789O1'])->assertHasTableActionErrors(['gcash_reference']);
+
+    // One real payment can't back two requests, however it's spaced
+    loan(User::factory()->create(), makeBook('Emma'), attributes: ['gcash_reference' => '1012345678901']);
+    requestBorrow(['duration' => '7', 'gcash_reference' => '1012345678901'])->assertHasTableActionErrors(['gcash_reference']);
+
+    expect($this->user->transactions()->count())->toBe(0);
 });
 
 it('requires a payment receipt', function () {
@@ -155,18 +172,30 @@ it('does not count returned or rejected loans against the rules', function () {
     expect($this->user->borrowingBlockedReason($this->book))->toBeNull();
 });
 
-it('returns a book: sets the return date and puts the copy back', function () {
+it('returning a book only asks staff to check it in: the copy and the limit stay taken until they do', function () {
+    $librarian = User::factory()->create(['role' => 'librarian']);
     $loan = loan($this->user, $this->book);
+    loan($this->user, makeBook('Two'));
+    loan($this->user, makeBook('Three'));
 
     expect($this->book->fresh()->stock)->toBe(1);
 
     Livewire::test(MyBorrowedBooksWidget::class)
-        ->callTableAction('return', $loan);
+        ->callTableAction('return', $loan)
+        ->assertNotified('Return requested')
+        ->assertSee('Awaiting check-in')
+        ->assertTableActionHidden('return', $loan->fresh());
 
     expect($loan->fresh())
-        ->status->toBe(TransactionStatus::Returned)
-        ->return_date->not->toBeNull()
-        ->and($this->book->fresh()->stock)->toBe(2);
+        ->status->toBe(TransactionStatus::PendingReturn)
+        ->return_date->toBeNull()
+        ->return_requested_at->not->toBeNull()
+        ->and($this->book->fresh()->stock)->toBe(1)
+        ->and($librarian->notifications()->where('data->title', 'Return to verify')->exists())->toBeTrue();
+
+    // Still counts as borrowed, and toward the limit of 3
+    expect($this->user->borrowingBlockedReason($this->book))->toBe('You already have "Dune" borrowed.')
+        ->and($this->user->accountBorrowingBlockedReason())->toContain('up to 3 books borrowed or requested');
 });
 
 it('lets the user cancel a pending request', function () {
@@ -186,7 +215,7 @@ it('lets the user cancel a pending request', function () {
 });
 
 it('offers the 1 Month Promo: 31 days for ₱60.00', function () {
-    expect(Transaction::DURATION_PRESETS[31])->toBe('1 Month Promo (31 days - 3 days free!)')
+    expect(Transaction::DURATION_PRESETS[31])->toBe('1 Month Promo (31 days)')
         ->and(Transaction::feeFor(31))->toBe(60.0)
         ->and(Transaction::isValidDuration(31, custom: false))->toBeTrue()
         // 31 is only valid as the promo, not as a custom value
@@ -199,4 +228,17 @@ it('offers the 1 Month Promo: 31 days for ₱60.00', function () {
         ->duration_days->toBe(31)
         ->fee_amount->toBe('60.00')
         ->due_date->toBe('2026-11-24');
+});
+
+it('shows no return date in the history while a book is still on loan, never the due date', function () {
+    $loan = loan($this->user, $this->book, dueDate: '2026-11-01');
+
+    Livewire::test(\App\Filament\User\Widgets\BorrowingHistoryWidget::class)
+        ->assertTableColumnStateSet('return_date', null, $loan)
+        ->assertDontSee('Nov 1, 2026');
+
+    $loan->update(['status' => TransactionStatus::Returned]);
+
+    Livewire::test(\App\Filament\User\Widgets\BorrowingHistoryWidget::class)
+        ->assertSee('Oct 24, 2026');
 });

@@ -23,7 +23,7 @@ class ProfileStatsWidget extends BaseWidget
             ->lent()
             ->toBase()
             ->selectRaw('COUNT(*) as total')
-            ->selectRaw("COALESCE(SUM(CASE WHEN status IN ('approved', 'pending_fine_verification') AND return_date IS NULL THEN 1 ELSE 0 END), 0) as current")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status IN ('approved', 'pending_fine_verification', 'pending_return') AND return_date IS NULL THEN 1 ELSE 0 END), 0) as current")
             ->selectRaw("COALESCE(SUM(CASE WHEN status = 'approved' AND return_date IS NULL AND due_date < ? THEN 1 ELSE 0 END), 0) as overdue", [today()->toDateString()])
             ->first();
 

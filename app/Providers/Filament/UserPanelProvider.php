@@ -32,7 +32,7 @@ class UserPanelProvider extends PanelProvider
             ->topNavigation()
             // ->login() // Disable default Filament login
             // ->loginUrl('/login') // Redirect to your custom unified login page
-            ->registration()
+            // No ->registration(): students sign up on the throttled /login form, not Filament's own /user/register page
             ->colors([
                 'primary' => Color::Emerald,
             ])

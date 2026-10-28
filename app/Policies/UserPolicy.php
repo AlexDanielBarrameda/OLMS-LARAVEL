@@ -40,11 +40,12 @@ class UserPolicy
     }
 
     /**
-     * Determine whether the user can delete the model.
+     * Only accounts with no borrowing history, and never your own: deleting one would erase its fees, fines and refunds
+     * (the database refuses too). Set a former student to Inactive instead, which blocks sign-in.
      */
     public function delete(User $user, User $model): bool
     {
-        return $user->isSuperAdmin();
+        return $user->isSuperAdmin() && $user->isNot($model) && ! $model->hasTransactions();
     }
 
     /**
@@ -60,6 +61,6 @@ class UserPolicy
      */
     public function forceDelete(User $user, User $model): bool
     {
-        return $user->isSuperAdmin();
+        return $this->delete($user, $model);
     }
 }

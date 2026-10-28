@@ -48,19 +48,113 @@
         order: 1;
     }
 
+    /* Green nav pill. White on emerald-700 in light mode and dark ink on emerald-400 in dark mode, so the label passes AA either way. */
+    .fi-topbar-item .fi-topbar-item-btn {
+        transition: background-color 160ms ease-out, color 160ms ease-out;
+    }
+
     .fi-topbar-item.fi-active .fi-topbar-item-btn {
-        background-color: rgb(16 185 129);
-        color: #000000 !important;
+        background-color: var(--primary-700);
     }
 
     .fi-topbar-item.fi-active .fi-topbar-item-btn .fi-topbar-item-label,
     .fi-topbar-item.fi-active .fi-topbar-item-btn .fi-topbar-item-icon {
-        color: #000000 !important;
+        color: var(--white, #fff) !important;
     }
 
-    .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover {
-        background-color: rgb(209 250 229);
-        color: #000000;
+    .dark .fi-topbar-item.fi-active .fi-topbar-item-btn {
+        background-color: var(--primary-400);
+    }
+
+    .dark .fi-topbar-item.fi-active .fi-topbar-item-btn .fi-topbar-item-label,
+    .dark .fi-topbar-item.fi-active .fi-topbar-item-btn .fi-topbar-item-icon {
+        color: var(--gray-950) !important;
+    }
+
+    @media (hover: hover) and (pointer: fine) {
+        .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover {
+            background-color: var(--primary-50);
+        }
+
+        .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover .fi-topbar-item-label,
+        .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover .fi-topbar-item-icon {
+            color: var(--primary-800);
+        }
+
+        .dark .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover {
+            background-color: color-mix(in oklab, var(--primary-400) 15%, transparent);
+        }
+
+        .dark .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover .fi-topbar-item-label,
+        .dark .fi-topbar-item:not(.fi-active) .fi-topbar-item-btn:hover .fi-topbar-item-icon {
+            color: var(--primary-300);
+        }
+    }
+
+    /* Profile header (UserInfoWidget) */
+    .bg-profile {
+        display: flex;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 0.25rem 0;
+    }
+
+    .bg-profile-avatar {
+        width: 4.5rem;
+        height: 4.5rem;
+        flex-shrink: 0;
+    }
+
+    .bg-profile-name {
+        margin: 0;
+        font-size: 1.375rem;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+        color: var(--gray-950);
+    }
+
+    .dark .bg-profile-name {
+        color: var(--white, #fff);
+    }
+
+    .bg-profile-facts {
+        display: grid;
+        gap: 0.375rem;
+        margin: 0.5rem 0 0;
+        padding: 0;
+        list-style: none;
+        font-size: 0.875rem;
+        color: var(--gray-600);
+    }
+
+    .dark .bg-profile-facts {
+        color: var(--gray-400);
+    }
+
+    .bg-profile-facts li {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        min-width: 0;
+        overflow-wrap: anywhere;
+    }
+
+    .bg-profile-facts svg {
+        width: 1.125rem;
+        height: 1.125rem;
+        flex-shrink: 0;
+        color: var(--gray-400);
+    }
+
+    @media (max-width: 30rem) {
+        .bg-profile {
+            align-items: flex-start;
+        }
+
+        .bg-profile-avatar {
+            width: 3.5rem;
+            height: 3.5rem;
+        }
     }
 
     .bg-books .fi-ta-content-ctn .fi-ta-content.fi-ta-content-grid {

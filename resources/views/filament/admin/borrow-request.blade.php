@@ -11,8 +11,14 @@
         </div>
         <div>
             <dt>Fee paid</dt>
-            <dd class="bg-receipt-amount">{{ $loan->fee_amount !== null ? \App\Models\Transaction::peso((float) $loan->fee_amount) : '—' }}</dd>
+            <dd class="bg-receipt-amount">{{ $loan->fee_amount !== null ? $loan->feeLabel() : '—' }}</dd>
         </div>
+        @if ($loan->gcash_reference)
+            <div>
+                <dt>GCash ref</dt>
+                <dd>{{ $loan->gcash_reference }}</dd>
+            </div>
+        @endif
         <div>
             <dt>Due if approved now</dt>
             <dd>{{ today()->addDays($days)->format('M j, Y') }}</dd>
@@ -24,7 +30,7 @@
             <img src="{{ $receiptUrl }}" alt="GCash receipt uploaded by {{ $loan->user->name }}">
         </a>
         <div class="bg-receipt-row">
-            <p class="bg-receipt-hint">Check the amount matches the fee, plus the date and reference number.</p>
+            <p class="bg-receipt-hint">Screenshots can be edited: find this reference number and amount in the library's GCash history before approving.</p>
             <x-filament::button tag="a" :href="$receiptUrl" target="_blank" rel="noopener" color="gray" size="sm" icon="heroicon-m-arrow-top-right-on-square">
                 View receipt
             </x-filament::button>

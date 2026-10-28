@@ -135,8 +135,14 @@
             transition: padding 320ms var(--bg-ease-drawer);
         }
 
+        /* Collapsed: 2.5rem items with 1.25rem either side fill the 5rem rail exactly, so every icon sits on the rail's centre line,
+           the same vertical axis as the burger above. Filament pulls the groups 0.5rem left (-mx-2), which put them 12px off it. */
         .fi-body.fi-body-has-sidebar-collapsible-on-desktop .fi-sidebar:not(.fi-sidebar-open) .fi-sidebar-nav {
-            padding-inline: 1rem;
+            padding-inline: 1.25rem;
+        }
+
+        .fi-body.fi-body-has-sidebar-collapsible-on-desktop .fi-sidebar:not(.fi-sidebar-open) .fi-sidebar-nav-groups {
+            margin-inline: 0;
         }
 
         /* Brand block: the top of the rail, with the burger at its top-right */

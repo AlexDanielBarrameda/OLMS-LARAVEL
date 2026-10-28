@@ -10,8 +10,31 @@
                 </div>
             </div>
 
-            @if ($pendingLoans || $finesToVerify || $refundsToProcess || $pendingBookRequests)
+            @if ($pendingLoans || $finesToVerify || $returnsToVerify || $paymentsToCheck || $refundsToProcess || $pendingBookRequests)
                 <div class="bg-welcome-actions">
+                    @if ($returnsToVerify)
+                        <x-filament::button
+                            tag="a"
+                            :href="$returnsUrl"
+                            color="info"
+                            icon="heroicon-m-arrow-uturn-left"
+                        >
+                            Check in {{ $returnsToVerify }} {{ str('return')->plural($returnsToVerify) }}
+                        </x-filament::button>
+                    @endif
+
+                    @if ($paymentsToCheck)
+                        <x-filament::button
+                            tag="a"
+                            :href="$paymentChecksUrl"
+                            color="warning"
+                            outlined
+                            icon="heroicon-m-magnifying-glass"
+                        >
+                            Check {{ $paymentsToCheck }} {{ str('payment')->plural($paymentsToCheck) }}
+                        </x-filament::button>
+                    @endif
+
                     @if ($refundsToProcess)
                         <x-filament::button
                             tag="a"

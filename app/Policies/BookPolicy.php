@@ -49,8 +49,9 @@ class BookPolicy
      */
     public function delete(User $user, Book $book): bool
     {
-        // ONLY Super Admins can delete books
-        return $user->isSuperAdmin();
+        // ONLY Super Admins, and only books that were never borrowed: deleting one would erase its fees, fines and refunds
+        // (the database refuses too). Set a borrowed book's stock to 0 instead.
+        return $user->isSuperAdmin() && ! $book->hasTransactions();
     }
 
     /**
@@ -67,7 +68,6 @@ class BookPolicy
      */
     public function forceDelete(User $user, Book $book): bool
     {
-        // ONLY Super Admins can permanently delete books
-        return $user->isSuperAdmin();
+        return $this->delete($user, $book);
     }
 }

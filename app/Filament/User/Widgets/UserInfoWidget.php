@@ -10,12 +10,11 @@ class UserInfoWidget extends Widget
 {
     protected static bool $isLazy = false;
 
-    // FIX: Removed the "static" keyword from this line!
     protected string $view = 'filament.user.widgets.user-info-widget';
     
     protected int | string | array $columnSpan = 'full';
     
-    protected static ?int $sort = 1; // Puts it at the very top
+    protected static ?int $sort = 1;
 
     protected function getViewData(): array
     {

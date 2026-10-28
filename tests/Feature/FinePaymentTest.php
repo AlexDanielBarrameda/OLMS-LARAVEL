@@ -114,14 +114,16 @@ it('submits the payment for review without returning the book', function () {
     Storage::disk('receipts')->assertExists($loan->payment_receipt_path);
 });
 
-it('locks in the fine when submitted, and stops overdue reminders', function () {
+it('locks in the fine when submitted and stops reminders, but keeps the student blocked until staff verify it', function () {
     submitReceipt();
     $this->travel(3)->days();
 
     expect($this->loan->fresh()->fineDue())->toBe(25.0)
         ->and(Transaction::needsReminder()->count())->toBe(0)
-        ->and(Transaction::overdue()->count())->toBe(0)
-        ->and(Transaction::checkedOut()->count())->toBe(1);
+        ->and(Transaction::checkedOut()->count())->toBe(1)
+        // An unchecked receipt could be fake, so it doesn't lift the overdue block
+        ->and(Transaction::overdue()->count())->toBe(1)
+        ->and($this->loan->user->accountBorrowingBlockedReason())->toContain('You have 1 overdue book.');
 });
 
 it('lets staff verify the payment, which returns the book', function () {

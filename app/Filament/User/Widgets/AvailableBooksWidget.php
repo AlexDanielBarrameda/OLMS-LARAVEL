@@ -12,16 +12,18 @@ use Filament\Forms\Components\Select;
 use Filament\Forms\Components\TextInput;
 use Filament\Schemas\Components\Utilities\Get;
 use Filament\Schemas\Components\View;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Filament\Tables;
 use Filament\Tables\Table;
 use Filament\Widgets\TableWidget as BaseWidget;
 use Filament\Tables\Columns\Layout\Stack;
-use Filament\Actions\Action; // Corrected import for Filament v4
+use Filament\Actions\Action;
 use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\Auth;
-use Livewire\Attributes\On; // <-- Added for event listening
-use Livewire\Component; // <-- Added to dispatch events
+use Livewire\Attributes\On;
+use Livewire\Component;
 
 class AvailableBooksWidget extends BaseWidget
 {
@@ -33,7 +35,7 @@ class AvailableBooksWidget extends BaseWidget
     // book_id => status of this user's open requests/loans, loaded once per render instead of per card
     protected ?array $openStatuses = null;
 
-    // 1. Listen for changes (like when a book is returned)
+    // Refresh when another widget changes a loan (a book returned, a request cancelled)
     #[On('update-book-tables')]
     public function refreshAvailableBooks(): void
     {
@@ -90,8 +92,8 @@ class AvailableBooksWidget extends BaseWidget
             },
             'steps' => [
                 'Scan the QR with GCash (or save it and upload it in GCash) and pay <strong>'.e($amount).'</strong>.',
-                'Upload a screenshot of your receipt below, then send your request.',
-                'A librarian checks your payment and approves the request. If it can\'t be approved, your fee is refunded.',
+                'Enter the 13-digit reference number from your GCash receipt and upload a screenshot of it below.',
+                'A librarian finds your payment in the library\'s GCash and approves the request. If it can\'t be approved, your fee is refunded.',
             ],
             'qrUrl' => asset('images/gcash-qr.png'),
         ];
@@ -128,7 +130,8 @@ class AvailableBooksWidget extends BaseWidget
                         ->imageWidth('100%')
                         ->imageHeight('auto')
                         ->extraImgAttributes(fn (Book $record) => [
-                            'alt' => e($record->title),
+                            // Decorative: the title is printed right below, so screen readers shouldn't hear it twice
+                            'alt' => '',
                             'loading' => 'lazy',
                             'class' => 'bg-book-cover',
                             'onerror' => "this.onerror=null;this.src='{$record->fallbackCoverUrl()}'",
@@ -140,7 +143,7 @@ class AvailableBooksWidget extends BaseWidget
                     Tables\Columns\TextColumn::make('stock')
                         ->formatStateUsing(fn ($state) => "{$state} left")
                         ->badge()
-                        ->color(fn ($state) => $state > 0 ? 'success' : 'danger'),
+                        ->color(fn ($state) => $state > 0 ? 'gray' : 'danger'),
                 ])->space(2),
             ])
             ->actions([
@@ -148,10 +151,11 @@ class AvailableBooksWidget extends BaseWidget
                     ->label(fn (Book $record) => match ($this->openStatusFor($record)) {
                         TransactionStatus::Pending => 'Requested',
                         TransactionStatus::Approved, TransactionStatus::PendingFineVerification => 'Borrowed',
+                        TransactionStatus::PendingReturn => 'Returning',
                         default => 'Request to Borrow',
                     })
                     ->button()
-                    ->color('success')
+                    ->color('primary')
                     // Blocked students find out before paying, not after
                     ->disabled(fn (Book $record) => $record->stock <= 0 || $this->openStatusFor($record) !== null || $this->accountBlockReason() !== null)
                     ->tooltip(fn (Book $record) => $this->openStatusFor($record) === null ? $this->accountBlockReason() : null)
@@ -182,6 +186,23 @@ class AvailableBooksWidget extends BaseWidget
                             ->live(debounce: 400),
                         View::make('filament.user.payment')
                             ->viewData(fn (Get $get) => static::feeViewData(static::requestedDays($get('duration'), $get('custom_days')))),
+                        // Staff search the library's GCash for this before approving (or refunding), so a doctored screenshot gets nowhere
+                        TextInput::make('gcash_reference')
+                            ->label('GCash reference number')
+                            ->placeholder('e.g. 1012345678901')
+                            ->helperText('The 13-digit "Ref No." on your GCash receipt.')
+                            ->required()
+                            // Digits only as you type or paste, so "1012 345 678901" becomes "1012345678901"
+                            ->mask(str_repeat('9', Transaction::GCASH_REFERENCE_LENGTH))
+                            ->length(Transaction::GCASH_REFERENCE_LENGTH)
+                            ->inputMode('numeric')
+                            // One real payment can't back two requests
+                            ->rules(['digits:'.Transaction::GCASH_REFERENCE_LENGTH, Rule::unique('transactions', 'gcash_reference')])
+                            ->validationMessages([
+                                'digits' => 'Enter the 13-digit reference number from your GCash receipt.',
+                                'size' => 'Enter the 13-digit reference number from your GCash receipt.',
+                                'unique' => 'This reference number has already been used for another request.',
+                            ]),
                         FileUpload::make('receipt')
                             ->label('Payment receipt / screenshot')
                             ->helperText('A screenshot of the GCash confirmation, showing the amount and reference number. PNG or JPG, up to 5 MB.')
@@ -194,7 +215,6 @@ class AvailableBooksWidget extends BaseWidget
                             ->visibility('private'),
                     ])
                     ->modalSubmitActionLabel('Send request')
-                    // 2. Inject $livewire into the closure
                     ->action(function (Book $record, array $data, Component $livewire, Action $action) {
                         // Never trust the client's amount: recompute it from the chosen duration
                         $days = static::requestedDays($data['duration'] ?? null, $data['custom_days'] ?? null);
@@ -204,36 +224,39 @@ class AvailableBooksWidget extends BaseWidget
                             $action->halt();
                         }
 
+                        $reference = $data['gcash_reference'];
+
                         // Lock the user and the book so double clicks can't slip past the rules
-                        $result = DB::transaction(function () use ($record, $data, $days): Transaction|string {
-                            $user = User::lockForUpdate()->findOrFail(Auth::id());
-                            $book = Book::lockForUpdate()->findOrFail($record->id);
+                        try {
+                            $result = DB::transaction(function () use ($record, $data, $days, $reference): Transaction|string {
+                                $user = User::lockForUpdate()->findOrFail(Auth::id());
+                                $book = Book::lockForUpdate()->findOrFail($record->id);
 
-                            if ($book->stock <= 0) {
-                                return "\"{$book->title}\" is out of stock.";
-                            }
+                                if ($book->stock <= 0) {
+                                    return "\"{$book->title}\" is out of stock.";
+                                }
 
-                            if ($reason = $user->borrowingBlockedReason($book)) {
-                                return $reason;
-                            }
+                                if ($reason = $user->borrowingBlockedReason($book)) {
+                                    return $reason;
+                                }
 
-                            // Stock is only taken when a librarian approves; the paid-for period starts then too
-                            return Transaction::create([
-                                'user_id' => $user->id,
-                                'book_id' => $book->id,
-                                'status' => TransactionStatus::Pending,
-                                'borrow_date' => today()->toDateString(),
-                                'due_date' => today()->addDays($days)->toDateString(),
-                                'duration_days' => $days,
-                                'fee_amount' => Transaction::feeFor($days),
-                                'borrow_receipt_path' => $data['receipt'],
-                                'fine_status' => 'None',
-                            ]);
-                        });
+                                // Stock is only taken when a librarian approves; the paid-for period starts then too
+                                return Transaction::create([
+                                    'user_id' => $user->id,
+                                    'book_id' => $book->id,
+                                    'status' => TransactionStatus::Pending,
+                                    'borrow_date' => today()->toDateString(),
+                                    'due_date' => today()->addDays($days)->toDateString(),
+                                    'duration_days' => $days,
+                                    'fee_amount' => Transaction::feeFor($days),
+                                    'gcash_reference' => $reference,
+                                    'borrow_receipt_path' => $data['receipt'],
+                                    'fine_status' => 'None',
+                                ]);
+                            });
 
-                        if (is_string($result)) {
-                            // They've already paid: keep a rejected record with the receipt, so the refund is tracked (refund_status = pending)
-                            $refused = Transaction::create([
+                            // They say they've paid: keep a rejected record with the reference and receipt. Staff check the payment arrived before it's refunded.
+                            $refused = is_string($result) ? Transaction::create([
                                 'user_id' => Auth::id(),
                                 'book_id' => $record->id,
                                 'status' => TransactionStatus::Rejected,
@@ -241,15 +264,22 @@ class AvailableBooksWidget extends BaseWidget
                                 'due_date' => today()->addDays($days)->toDateString(),
                                 'duration_days' => $days,
                                 'fee_amount' => Transaction::feeFor($days),
+                                'gcash_reference' => $reference,
                                 'borrow_receipt_path' => $data['receipt'],
                                 'fine_status' => 'None',
-                            ]);
+                            ]) : null;
+                        } catch (UniqueConstraintViolationException) {
+                            // The same reference was submitted twice at once; the form rule catches it otherwise
+                            Notification::make()->title('This reference number has already been used')->danger()->send();
+                            $action->halt();
+                        }
 
+                        if ($refused) {
                             app(LibraryNotifications::class)->refundNeeded($refused->load('user', 'book'), $result);
 
                             Notification::make()
                                 ->title("Can't request this book")
-                                ->body($result.' Your '.Transaction::peso((float) $refused->fee_amount).' fee will be refunded via GCash.')
+                                ->body(LibraryNotifications::sentences($result, LibraryNotifications::refundPromise($refused)))
                                 ->danger()
                                 ->send();
 
@@ -267,7 +297,6 @@ class AvailableBooksWidget extends BaseWidget
                         $this->openStatuses = null;
                         $this->accountBlockLoaded = false;
 
-                        // 3. Shout out to the page that the tables need to refresh!
                         $livewire->dispatch('update-book-tables');
                     }),
             ]);

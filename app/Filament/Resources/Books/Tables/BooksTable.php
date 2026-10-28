@@ -17,9 +17,11 @@ class BooksTable
     public static function configure(Table $table): Table
     {
         return $table
-            // How many times each title has been lent (approved loans, current or returned)
+            // How many times each title has been lent (approved loans, current or returned), and whether it has any
+            // transactions at all (books with history can't be deleted; loaded here so the Delete check doesn't query per row)
             ->modifyQueryUsing(fn (Builder $query): Builder => $query->withCount([
                 'transactions as times_lent' => fn (Builder $loans): Builder => $loans->lent(),
+                'transactions',
             ]))
             ->columns([
                 TextColumn::make('title')
@@ -67,13 +69,13 @@ class BooksTable
                     ->query(fn (Builder $query): Builder => $query->lowStock()),
             ])
             ->actions([
-                // Reinstating the Admin powers!
                 EditAction::make(),
                 DeleteAction::make(),
             ])
             ->bulkActions([
                 BulkActionGroup::make([
-                    DeleteBulkAction::make(),
+                    // Checks each book, so ones with borrowing history are skipped (and reported) instead of failing the whole delete
+                    DeleteBulkAction::make()->authorizeIndividualRecords('delete'),
                 ]),
             ]);
     }

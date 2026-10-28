@@ -14,7 +14,7 @@ class BorrowingHistoryWidget extends BaseWidget
 
     protected int | string | array $columnSpan = 'full';
     protected static ?string $heading = 'Borrowing History';
-    protected static ?int $sort = 3; // Puts it at the bottom
+    protected static ?int $sort = 3;
 
     public function table(Table $table): Table
     {
@@ -32,18 +32,25 @@ class BorrowingHistoryWidget extends BaseWidget
                     ->label('Refund')
                     ->badge()
                     ->formatStateUsing(fn (?string $state, Transaction $record) => match ($state) {
-                        Transaction::REFUNDED => 'Refunded '.Transaction::peso((float) $record->fee_amount),
-                        Transaction::REFUND_PENDING => 'Refund pending · '.Transaction::peso((float) $record->fee_amount),
+                        Transaction::REFUNDED => 'Refunded '.$record->feeLabel(),
+                        Transaction::REFUND_PENDING => 'Refund pending · '.$record->feeLabel(),
+                        Transaction::REFUND_NOT_PAID => 'No refund · payment not found',
                         default => null,
                     })
-                    ->color(fn (?string $state) => $state === Transaction::REFUNDED ? 'success' : 'warning')
+                    ->color(fn (?string $state) => match ($state) {
+                        Transaction::REFUNDED => 'success',
+                        Transaction::REFUND_NOT_PAID => 'danger',
+                        default => 'warning',
+                    })
                     ->placeholder('—'),
                 Tables\Columns\TextColumn::make('borrow_date')
                     ->date()
                     ->label('Borrow Date'),
-                Tables\Columns\TextColumn::make('due_date')
+                // Only set once staff check the book in; on loan (or never lent) shows a dash
+                Tables\Columns\TextColumn::make('return_date')
                     ->date()
-                    ->label('Return Date'),
+                    ->label('Return Date')
+                    ->placeholder('—'),
             ]);
     }
 }

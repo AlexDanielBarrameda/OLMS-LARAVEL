@@ -14,9 +14,9 @@ class MonthlyBorrowingChart extends ChartWidget
 
     protected ?string $heading = 'Monthly Borrowing Trends';
 
-    protected static ?int $sort = 3; // Sits next to the Pie Chart (sort 2)
+    // Half width, next to Books by Category (sort 2)
+    protected static ?int $sort = 3;
 
-    // Set to half-width
     protected int | string | array $columnSpan = '1';
 
     protected function getData(): array
@@ -37,7 +37,7 @@ class MonthlyBorrowingChart extends ChartWidget
                 [
                     'label' => 'Books Borrowed',
                     'data' => $months->map(fn (Carbon $month) => $counts->get($month->format('Y-m'), 0))->all(),
-                    'backgroundColor' => '#22c55e',
+                    'backgroundColor' => BooksByCategoryChart::BAR_COLOR,
                     'borderRadius' => 4,
                 ],
             ],
@@ -52,12 +52,15 @@ class MonthlyBorrowingChart extends ChartWidget
     protected function getOptions(): array
     {
         return [
+            'plugins' => [
+                'legend' => ['display' => false],
+            ],
             'scales' => [
                 'y' => [
                     'beginAtZero' => true,
-                    'suggestedMax' => 10, // Forces the top number to be at least 10
+                    'suggestedMax' => 10, // A near-empty month still gets a sensible scale
                     'ticks' => [
-                        'precision' => 0, // Removes decimals, allows clean auto-scaling for large numbers
+                        'precision' => 0,
                     ],
                 ],
             ],
