@@ -30,7 +30,7 @@ class BookRequestResource extends Resource
     // Super admins see every request; librarians see their own
     public static function getEloquentQuery(): Builder
     {
-        $query = parent::getEloquentQuery()->with(['requester', 'reviewer']);
+        $query = parent::getEloquentQuery()->with(['requester', 'reviewer', 'book']);
 
         return auth()->user()?->isSuperAdmin()
             ? $query

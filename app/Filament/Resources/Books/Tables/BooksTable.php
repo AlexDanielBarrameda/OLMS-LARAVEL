@@ -30,6 +30,7 @@ class BooksTable
                 TextColumn::make('isbn')
                     ->label('ISBN')
                     ->searchable()
+                    ->placeholder('Not set')
                     ->toggleable(isToggledHiddenByDefault: true),
                 TextColumn::make('category')
                     ->searchable(),
@@ -39,6 +40,7 @@ class BooksTable
                         'Available' => 'success',
                         'Borrowed' => 'gray',
                         'Damaged' => 'danger',
+                        Book::STATUS_ON_ORDER => 'info',
                         default => 'primary',
                     }),
                 TextColumn::make('stock')

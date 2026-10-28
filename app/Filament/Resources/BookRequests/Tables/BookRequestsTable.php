@@ -3,6 +3,8 @@
 namespace App\Filament\Resources\BookRequests\Tables;
 
 use App\Enums\BookRequestStatus;
+use App\Filament\Resources\Books\BookResource;
+use App\Models\Book;
 use App\Models\BookRequest;
 use App\Services\LibraryNotifications;
 use Filament\Actions\Action;
@@ -40,6 +42,14 @@ class BookRequestsTable
                     ->visible(fn (): bool => (bool) auth()->user()?->isSuperAdmin()),
                 TextColumn::make('status')
                     ->badge(),
+                TextColumn::make('book.status')
+                    ->label('Catalog')
+                    ->badge()
+                    ->color(fn (?string $state): string => $state === Book::STATUS_ON_ORDER ? 'info' : 'success')
+                    ->icon('heroicon-m-arrow-top-right-on-square')
+                    ->iconPosition('after')
+                    ->url(fn (BookRequest $record): ?string => $record->book ? BookResource::getUrl('edit', ['record' => $record->book]) : null)
+                    ->placeholder('—'),
                 TextColumn::make('created_at')
                     ->label('Requested')
                     ->since()
@@ -87,12 +97,16 @@ class BookRequestsTable
             ->visible(fn (BookRequest $record): bool => auth()->user()?->can('review', $record) ?? false)
             ->requiresConfirmation()
             ->modalHeading(fn (BookRequest $record): string => ($approving ? 'Approve' : 'Reject')." \"{$record->title}\"?")
-            ->modalDescription(fn (BookRequest $record): string => "{$record->requester?->name} will be notified.")
+            ->modalDescription(fn (BookRequest $record): string => $approving
+                ? "It will be added to the catalog as \"On Order\" with 0 copies, and {$record->requester?->name} will be notified."
+                : "{$record->requester?->name} will be notified.")
             ->modalSubmitActionLabel($approving ? 'Approve' : 'Reject')
             ->action(function (BookRequest $record) use ($decision, $approving): void {
                 abort_unless(auth()->user()?->can('review', $record), 403);
 
-                $record->review($decision, auth()->user());
+                $approving
+                    ? $record->approve(auth()->user())
+                    : $record->review($decision, auth()->user());
 
                 app(LibraryNotifications::class)->bookRequestDecided($record);
 

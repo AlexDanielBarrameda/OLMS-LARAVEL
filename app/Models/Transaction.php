@@ -6,9 +6,13 @@ use App\Enums\TransactionStatus;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class Transaction extends Model
 {
+    use LogsActivity;
+
     // Reminders start this many days before the due date
     public const DUE_SOON_DAYS = 3;
 
@@ -163,5 +167,16 @@ class Transaction extends Model
             $days <= static::DUE_SOON_DAYS => "Due in {$days} days",
             default => null,
         };
+    }
+
+    // Audit trail for the Activity Log: who changed what (only the fields that actually changed)
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('library')
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(fn (string $event): string => "Transaction {$event}");
     }
 }

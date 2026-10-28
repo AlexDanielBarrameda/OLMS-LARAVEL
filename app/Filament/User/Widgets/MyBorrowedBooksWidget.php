@@ -4,6 +4,7 @@ namespace App\Filament\User\Widgets;
 
 use App\Enums\TransactionStatus;
 use App\Models\Transaction;
+use App\Services\LibraryNotifications;
 use Illuminate\Database\Eloquent\Builder;
 use Filament\Tables;
 use Filament\Tables\Table;
@@ -144,6 +145,8 @@ class MyBorrowedBooksWidget extends BaseWidget
                     ->action(function (Transaction $record, Component $livewire) {
                         // Still pending, so no stock was taken
                         $record->delete();
+
+                        app(LibraryNotifications::class)->borrowCancelled($record);
 
                         Notification::make()->title('Request cancelled')->success()->send();
 

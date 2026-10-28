@@ -5,14 +5,21 @@ namespace App\Models;
 use App\Services\LibraryNotifications;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Model;
+use Spatie\Activitylog\LogOptions;
+use Spatie\Activitylog\Traits\LogsActivity;
 
 class Book extends Model
 {
+    use LogsActivity;
+
     // At or below this many copies a book counts as low on stock
     public const LOW_STOCK = 1;
 
     // Lent out at least this many times to count as popular
     public const POPULAR_AFTER = 5;
+
+    // Approved for purchase but not in the library yet (created from an approved book request)
+    public const STATUS_ON_ORDER = 'On Order';
 
     protected $fillable = ['title', 'author', 'isbn', 'category', 'stock', 'status'];
 
@@ -40,6 +47,17 @@ class Book extends Model
         return $query->where('stock', '<=', static::LOW_STOCK);
     }
 
+    // In the library (or out on loan), as opposed to still on order
+    public function scopeInCatalog(Builder $query): Builder
+    {
+        return $query->where('status', '!=', static::STATUS_ON_ORDER);
+    }
+
+    public function isOnOrder(): bool
+    {
+        return $this->status === static::STATUS_ON_ORDER;
+    }
+
     // Cover from Open Library by ISBN (no API key). default=false makes it 404 instead of a blank image.
     public function coverUrl(): string
     {
@@ -55,5 +73,16 @@ class Book extends Model
     protected function normalizedIsbn(): string
     {
         return preg_replace('/[^0-9Xx]/', '', (string) $this->isbn);
+    }
+
+    // Audit trail for the Activity Log: who changed what (only the fields that actually changed)
+    public function getActivitylogOptions(): LogOptions
+    {
+        return LogOptions::defaults()
+            ->useLogName('library')
+            ->logFillable()
+            ->logOnlyDirty()
+            ->dontSubmitEmptyLogs()
+            ->setDescriptionForEvent(fn (string $event): string => "Book {$event}");
     }
 }

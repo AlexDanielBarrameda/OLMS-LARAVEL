@@ -32,6 +32,10 @@ class AdminPanelProvider extends PanelProvider
             ->brandName('Book Garden')
             // ->login() // Disable default Filament login
             // ->loginUrl('/login') // Redirect to your custom unified login page
+            // Burger button at the top left collapses the sidebar to icons on desktop
+            ->sidebarCollapsibleOnDesktop()
+            // Collapsed rail width; the brand block in the top bar matches it
+            ->collapsedSidebarWidth('5rem')
             ->colors([
                 'primary' => Color::Emerald,
             ])

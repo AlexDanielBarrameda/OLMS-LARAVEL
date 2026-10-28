@@ -50,7 +50,8 @@ class AvailableBooksWidget extends BaseWidget
     public function table(Table $table): Table
     {
         return $table
-            ->query(Book::query())
+            // Books still on order aren't in the library yet
+            ->query(Book::query()->inCatalog())
             ->extraAttributes(['class' => 'bg-books'])
             ->contentGrid([
                 'default' => 2,

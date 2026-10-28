@@ -43,12 +43,29 @@ it('clears register errors when switching back to the login tab', function () {
         ->assertHasNoErrors();
 });
 
+it('asks for the password twice and rejects a mismatch', function () {
+    Livewire::test(Login::class)
+        ->assertDontSee('Confirm Password')
+        ->set('isLogin', false)
+        ->assertSee('Confirm Password')
+        ->set('name', 'test acc')
+        ->set('email', 'test@gmail.com')
+        ->set('password', 'testacc123')
+        ->set('password_confirmation', 'testacc124')
+        ->call('authenticate')
+        ->assertHasErrors(['password' => 'confirmed'])
+        ->assertSee('The password field confirmation does not match.');
+
+    expect(User::where('email', 'test@gmail.com')->exists())->toBeFalse();
+});
+
 it('registers a student and redirects to the user panel', function () {
     Livewire::test(Login::class)
         ->set('isLogin', false)
         ->set('name', 'test acc')
         ->set('email', 'test@gmail.com')
         ->set('password', 'testacc123')
+        ->set('password_confirmation', 'testacc123')
         ->call('authenticate')
         ->assertHasNoErrors()
         ->assertRedirect('/user');

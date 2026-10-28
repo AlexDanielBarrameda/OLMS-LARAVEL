@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Spatie\Activitylog\Traits\CausesActivity;
 use Filament\Models\Contracts\FilamentUser; // 1. Added import
 use Filament\Panel; // 2. Added import
 
@@ -15,7 +16,8 @@ use Filament\Panel; // 2. Added import
 class User extends Authenticatable implements FilamentUser
 {
     /** @use HasFactory<UserFactory> */
-    use HasFactory, Notifiable;
+    // CausesActivity: $user->actions() lists the activity-log entries this user caused
+    use CausesActivity, HasFactory, Notifiable;
 
     /**
      * The attributes that are mass assignable.

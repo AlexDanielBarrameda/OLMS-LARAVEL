@@ -1,7 +1,10 @@
 <?php
 
 use App\Enums\TransactionStatus;
+use App\Filament\Resources\Transactions\Pages\EditTransaction;
 use App\Filament\Resources\Transactions\Pages\ListTransactions;
+use App\Filament\User\Widgets\MyBorrowedBooksWidget;
+use App\Services\LibraryNotifications;
 use App\Models\Book;
 use App\Models\Transaction;
 use App\Models\User;
@@ -90,6 +93,58 @@ it('lists pending requests first and filters to them', function () {
         ->filterTable('pending')
         ->assertCanSeeTableRecords([$this->request])
         ->assertCanNotSeeTableRecords([$loan]);
+});
+
+it('hides every delete action from librarians, but not from super admins', function () {
+    Livewire::test(ListTransactions::class)
+        ->assertTableActionHidden('delete', $this->request)
+        ->assertTableBulkActionHidden('delete');
+
+    Livewire::test(EditTransaction::class, ['record' => $this->request->getRouteKey()])
+        ->assertActionHidden('delete');
+
+    expect($this->librarian->can('delete', $this->request))->toBeFalse();
+
+    $this->actingAs(User::factory()->create(['role' => 'super_admin']));
+
+    Livewire::test(ListTransactions::class)
+        ->assertTableActionVisible('delete', $this->request)
+        ->assertTableBulkActionVisible('delete');
+});
+
+it('takes down the request alert and tells staff when a student cancels', function () {
+    app(LibraryNotifications::class)->borrowRequested($this->request->load('user', 'book'));
+    // A pre-existing alert from before alerts were tagged with their transaction
+    $this->librarian->notifications()->create([
+        'id' => (string) \Illuminate\Support\Str::uuid(),
+        'type' => 'Filament\\Notifications\\DatabaseNotification',
+        'data' => ['title' => 'New borrow request', 'body' => "{$this->student->name} wants to borrow \"Dune\".", 'format' => 'filament'],
+    ]);
+
+    expect($this->librarian->notifications()->count())->toBe(2);
+
+    Filament::setCurrentPanel(Filament::getPanel('user'));
+    $this->actingAs($this->student);
+
+    Livewire::test(MyBorrowedBooksWidget::class)
+        ->callTableAction('cancelRequest', $this->request);
+
+    $titles = $this->librarian->fresh()->notifications()->pluck('data')->pluck('title')->all();
+
+    expect($titles)->toBe(['Borrow request cancelled'])
+        ->and($this->librarian->notifications()->first()->data['body'])->toBe("{$this->student->name} cancelled their request for \"Dune\".");
+});
+
+it('marks the request alert read for everyone once a librarian decides', function () {
+    $otherLibrarian = User::factory()->create(['role' => 'librarian']);
+    app(LibraryNotifications::class)->borrowRequested($this->request->load('user', 'book'));
+
+    Livewire::test(ListTransactions::class)->callTableAction('approve', $this->request);
+
+    // (Approving also drops Dune to its last copy, which raises a separate low-stock alert)
+    $requestAlert = $otherLibrarian->notifications()->get()->firstWhere('data.title', 'New borrow request');
+
+    expect($requestAlert->read_at)->not->toBeNull();
 });
 
 it('keeps stock right however a loan changes', function () {

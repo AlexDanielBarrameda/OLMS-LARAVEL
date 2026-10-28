@@ -67,6 +67,16 @@ it('has no dropdown or sign out in the top bar; the avatar links to the profile,
         ->assertSee(filament()->getLogoutUrl(), escape: false);
 });
 
+it('has a burger button to collapse the sidebar on desktop', function () {
+    $this->actingAs($this->librarian);
+
+    expect(Filament::getPanel('admin')->isSidebarCollapsibleOnDesktop())->toBeTrue();
+
+    $this->get(AdminDashboard::getUrl())
+        ->assertOk()
+        ->assertSee('fi-topbar-open-collapse-sidebar-btn', escape: false);
+});
+
 it('counts real data in the stats', function () {
     $this->actingAs($this->librarian);
     $book = adminBook('Dune');
